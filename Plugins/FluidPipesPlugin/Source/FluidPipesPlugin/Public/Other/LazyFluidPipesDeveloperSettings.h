@@ -6,12 +6,27 @@
 #include "Engine/DeveloperSettings.h"
 #include "LazyFluidPipesDeveloperSettings.generated.h"
 
-/**
- * 
- */
 UCLASS()
-class LAZYFLUIDPIPESPLUGIN_API ULazyFluidPipesDeveloperSettings : public UDeveloperSettings
+class FLUIDPIPESPLUGIN_API ULazyFluidPipesDeveloperSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
-	
+
+public:
+	UPROPERTY(EditAnywhere, Config, Category = "FluidZeroD")
+	bool EnableFluidNetworkSimulationZeroD = true;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidZeroD", meta = (ClampMin = "0.001", UIMin = "0.001"))
+	float SimulationStepTimeZeroD = 0.016f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
+	bool EnableFluidSegmentSimulationOneD = true;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD", meta = (ClampMin = "0.001", UIMin = "0.001"))
+	float SimulationStepTimeOneD = 0.008f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD", meta = (ClampMin = "0.1", ClampMax = "1.0", UIMin = "0.1", UIMax = "1.0"))
+	float OneDSolverCflFactor = 0.9f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidDebug")
+	bool EnableFluidDebugMessages = false;
 };

@@ -10,7 +10,7 @@
  * 
  */
 UCLASS()
-class LAZYFLUIDPIPESPLUGIN_API UPipeObject : public UObject
+class FLUIDPIPESPLUGIN_API UPipeObject : public UObject
 {
 	GENERATED_BODY()
 	

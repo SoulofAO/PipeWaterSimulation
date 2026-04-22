@@ -7,7 +7,7 @@
 #include "PipeActor.generated.h"
 
 UCLASS()
-class LAZYFLUIDPIPESPLUGIN_API APipeActor : public AActor
+class FLUIDPIPESPLUGIN_API APipeActor : public AActor
 {
 	GENERATED_BODY()
 	
