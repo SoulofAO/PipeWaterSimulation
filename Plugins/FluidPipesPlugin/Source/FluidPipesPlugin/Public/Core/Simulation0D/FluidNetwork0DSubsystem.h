@@ -23,11 +23,15 @@ public:
 
 	const TArray<FFluidNetworkEdgeStateZeroD>& GetEdgeStates() const;
 
+	UFUNCTION(BlueprintCallable, Category = "FluidZeroD")
+	void ApplyImportedZeroDNetwork(const TArray<FFluidNetworkNodeStateZeroD>& Nodes, const TArray<FFluidNetworkEdgeStateZeroD>& Edges);
+
 private:
 	void SimulateStep(float SimulationStepTime);
 	void UpdateEdgeFlows(float SimulationStepTime);
 	void IntegrateNodeVolumes(float SimulationStepTime);
 	void UpdateNodePressures();
+	void DrawDebugZeroDWorldOverlay() const;
 
 	UPROPERTY(EditAnywhere, Category = "FluidZeroD")
 	TArray<FFluidNetworkNodeStateZeroD> NetworkNodeStates;

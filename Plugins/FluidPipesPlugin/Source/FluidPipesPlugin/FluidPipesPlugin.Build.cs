@@ -26,7 +26,7 @@ public class FluidPipesPlugin : ModuleRules
 			new string[]
 			{
 				"Core",
-				// ... add other public dependencies that you statically link with here ...
+				"GeometryFramework",
 			}
 			);
 			
@@ -39,8 +39,9 @@ public class FluidPipesPlugin : ModuleRules
 				"Slate",
 				"SlateCore",
                 "UMG",
-                "DeveloperSettings"
-				// ... add private dependencies that you statically link with here ...	
+                "DeveloperSettings",
+				"GeometryCore",
+				"GeometryScriptingCore",
 			}
 			);
 		

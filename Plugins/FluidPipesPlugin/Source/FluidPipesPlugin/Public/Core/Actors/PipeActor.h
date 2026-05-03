@@ -1,26 +1,25 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Components/DynamicMeshComponent.h"
 #include "PipeActor.generated.h"
 
-UCLASS()
+UCLASS(Abstract)
 class FLUIDPIPESPLUGIN_API APipeActor : public AActor
 {
 	GENERATED_BODY()
-	
-public:	
-	// Sets default values for this actor's properties
+
+public:
 	APipeActor();
 
+	virtual void OnConstruction(const FTransform& Transform) override;
+
 protected:
-	// Called when the game starts or when spawned
-	virtual void BeginPlay() override;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FluidPipeVisual")
+	TObjectPtr<UDynamicMeshComponent> FluidDynamicMeshComponent;
 
-public:	
-	// Called every frame
-	virtual void Tick(float DeltaTime) override;
+	virtual void RebuildFluidDynamicMesh();
 
+	void ClearFluidDynamicMeshGeometry();
 };

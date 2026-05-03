@@ -14,6 +14,21 @@ enum class EFluidBoundaryConditionTypeOneD : uint8
 	FixedFlow
 };
 
+UENUM(BlueprintType)
+enum class EFluidSceneEndpointKind : uint8
+{
+	Face,
+	Source,
+	Consumer
+};
+
+UENUM(BlueprintType)
+enum class EFluidOneDJunctionPressurePolicy : uint8
+{
+	AverageNeighborPressure,
+	FixedPressure
+};
+
 USTRUCT(BlueprintType)
 struct FFluidNetworkNodeStateZeroD
 {
@@ -124,8 +139,50 @@ struct FFluidSegmentStateOneD
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidOneD")
 	float RightBoundaryFlow = 0.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidOneDNetwork")
+	int32 LeftSceneNodeKey = INDEX_NONE;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidOneDNetwork")
+	int32 RightSceneNodeKey = INDEX_NONE;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidOneD")
 	TArray<FFluidSegmentCellStateOneD> CellStates;
+};
+
+USTRUCT(BlueprintType)
+struct FFluidOneDJunctionIncidentBranchOneD
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidOneDNetwork")
+	int32 BranchIndex = INDEX_NONE;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidOneDNetwork")
+	bool IncidentAtBranchStart = false;
+};
+
+USTRUCT(BlueprintType)
+struct FFluidOneDJunctionTopologyOneD
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidOneDNetwork")
+	int32 SceneNodeKey = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidOneDNetwork")
+	EFluidSceneEndpointKind SceneEndpointKind = EFluidSceneEndpointKind::Face;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidOneDNetwork")
+	TArray<FFluidOneDJunctionIncidentBranchOneD> IncidentBranches;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidOneDNetwork")
+	EFluidOneDJunctionPressurePolicy JunctionPressurePolicy = EFluidOneDJunctionPressurePolicy::AverageNeighborPressure;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidOneDNetwork")
+	float FixedJunctionPressure = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidOneDNetwork")
+	float ExternalVolumeFlowRate = 0.0f;
 };
 
 UCLASS()

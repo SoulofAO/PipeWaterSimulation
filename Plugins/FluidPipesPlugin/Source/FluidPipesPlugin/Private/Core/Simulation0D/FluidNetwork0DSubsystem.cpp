@@ -1,5 +1,9 @@
 #include "Core/Simulation0D/FluidNetwork0DSubsystem.h"
 
+#include "Core/Actors/PipeFluidBasePointActor.h"
+#include "DrawDebugHelpers.h"
+#include "EngineUtils.h"
+#include "FluidPipesDrawDebug.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 
@@ -18,21 +22,24 @@ void UFluidNetwork0DSubsystem::Deinitialize()
 void UFluidNetwork0DSubsystem::Tick(float DeltaTime)
 {
 	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	if (!Settings->EnableFluidNetworkSimulationZeroD)
+	if (Settings->EnableFluidNetworkSimulationZeroD)
 	{
-		return;
+		AccumulatedTime += DeltaTime;
+		while (AccumulatedTime >= Settings->SimulationStepTimeZeroD)
+		{
+			SimulateStep(Settings->SimulationStepTimeZeroD);
+			AccumulatedTime -= Settings->SimulationStepTimeZeroD;
+		}
 	}
 
-	AccumulatedTime += DeltaTime;
-	while (AccumulatedTime >= Settings->SimulationStepTimeZeroD)
+	if (FluidPipesShouldEmitScreenDebugMessages())
 	{
-		SimulateStep(Settings->SimulationStepTimeZeroD);
-		AccumulatedTime -= Settings->SimulationStepTimeZeroD;
+		UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("0D Tick: Nodes={0}, Edges={1}"), { FString::FromInt(NetworkNodeStates.Num()), FString::FromInt(NetworkEdgeStates.Num()) }), true, false, FLinearColor::Green, 0.0f);
 	}
 
-	if (Settings->EnableFluidDebugMessages)
+	if (FluidPipesShouldDrawZeroDWorldOverlay())
 	{
-		UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("0D Tick: Nodes={0}, Edges={1}"), { NetworkNodeStates.Num(), NetworkEdgeStates.Num() }), true, false, FLinearColor::Green, 0.0f);
+		DrawDebugZeroDWorldOverlay();
 	}
 }
 
@@ -56,6 +63,13 @@ const TArray<FFluidNetworkNodeStateZeroD>& UFluidNetwork0DSubsystem::GetNodeStat
 const TArray<FFluidNetworkEdgeStateZeroD>& UFluidNetwork0DSubsystem::GetEdgeStates() const
 {
 	return NetworkEdgeStates;
+}
+
+void UFluidNetwork0DSubsystem::ApplyImportedZeroDNetwork(const TArray<FFluidNetworkNodeStateZeroD>& Nodes, const TArray<FFluidNetworkEdgeStateZeroD>& Edges)
+{
+	NetworkNodeStates = Nodes;
+	NetworkEdgeStates = Edges;
+	AccumulatedTime = 0.0f;
 }
 
 void UFluidNetwork0DSubsystem::SimulateStep(float SimulationStepTime)
@@ -119,5 +133,116 @@ void UFluidNetwork0DSubsystem::UpdateNodePressures()
 	{
 		const float SafeCompliance = FMath::Max(NetworkNodeState.Compliance, KINDA_SMALL_NUMBER);
 		NetworkNodeState.Pressure = NetworkNodeState.ReferencePressure + (NetworkNodeState.StoredVolume - NetworkNodeState.ReferenceVolume) / SafeCompliance;
+	}
+}
+
+void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
+{
+	UWorld* World = GetWorld();
+	if (!World || NetworkNodeStates.Num() == 0)
+	{
+		return;
+	}
+
+	TArray<APipeFluidBasePointActor*> PointActors;
+	for (TActorIterator<APipeFluidBasePointActor> Iterator(World); Iterator; ++Iterator)
+	{
+		if (*Iterator)
+		{
+			PointActors.Add(*Iterator);
+		}
+	}
+
+	PointActors.Sort([](const APipeFluidBasePointActor& Left, const APipeFluidBasePointActor& Right)
+		{
+			return Left.SceneNodeKey < Right.SceneNodeKey;
+		});
+
+	TArray<FVector> NodeWorldLocations;
+	NodeWorldLocations.Reserve(NetworkNodeStates.Num());
+	TSet<int32> SeenSceneNodeKeys;
+	for (APipeFluidBasePointActor* PointActor : PointActors)
+	{
+		if (!PointActor)
+		{
+			continue;
+		}
+
+		const int32 SceneNodeKey = PointActor->SceneNodeKey;
+		if (SeenSceneNodeKeys.Contains(SceneNodeKey))
+		{
+			continue;
+		}
+
+		SeenSceneNodeKeys.Add(SceneNodeKey);
+		NodeWorldLocations.Add(PointActor->GetActorLocation());
+		if (NodeWorldLocations.Num() >= NetworkNodeStates.Num())
+		{
+			break;
+		}
+	}
+
+	if (NodeWorldLocations.Num() != NetworkNodeStates.Num())
+	{
+		return;
+	}
+
+	float MinimumPressure = NetworkNodeStates[0].Pressure;
+	float MaximumPressure = MinimumPressure;
+	for (const FFluidNetworkNodeStateZeroD& NetworkNodeState : NetworkNodeStates)
+	{
+		MinimumPressure = FMath::Min(MinimumPressure, NetworkNodeState.Pressure);
+		MaximumPressure = FMath::Max(MaximumPressure, NetworkNodeState.Pressure);
+	}
+
+	const float PressureSpan = FMath::Max(MaximumPressure - MinimumPressure, KINDA_SMALL_NUMBER);
+	const bool DrawDetailedNodeLabels = FluidPipesShouldEmitScreenDebugMessages();
+
+	for (int32 NodeIndex = 0; NodeIndex < NetworkNodeStates.Num(); ++NodeIndex)
+	{
+		const FVector NodeWorldLocation = NodeWorldLocations[NodeIndex];
+		const FFluidNetworkNodeStateZeroD& NetworkNodeState = NetworkNodeStates[NodeIndex];
+		const float NormalizedPressure = FMath::Clamp((NetworkNodeState.Pressure - MinimumPressure) / PressureSpan, 0.0f, 1.0f);
+		const FColor PressureDebugColor = FLinearColor::LerpUsingHSV(FLinearColor::Blue, FLinearColor::Red, NormalizedPressure).ToFColor(true);
+		DrawDebugSphere(World, NodeWorldLocation, 14.0f, 10, PressureDebugColor, false, 0.0f, 0, 1.5f);
+
+		if (DrawDetailedNodeLabels)
+		{
+			const FString NodeDebugLabel = FString::Format(
+				TEXT("{0} P={1} V={2} SrcQ={3}"),
+				{
+					NetworkNodeState.NodeName.ToString(),
+					FString::SanitizeFloat(NetworkNodeState.Pressure),
+					FString::SanitizeFloat(NetworkNodeState.StoredVolume),
+					FString::SanitizeFloat(NetworkNodeState.SourceFlow)
+				});
+			DrawDebugString(World, NodeWorldLocation + FVector(0.0f, 0.0f, 28.0f), NodeDebugLabel, nullptr, FColor::White, 0.0f, true, 1.1f);
+		}
+	}
+
+	for (const FFluidNetworkEdgeStateZeroD& NetworkEdgeState : NetworkEdgeStates)
+	{
+		if (!NetworkNodeStates.IsValidIndex(NetworkEdgeState.FromNodeIndex) || !NetworkNodeStates.IsValidIndex(NetworkEdgeState.ToNodeIndex))
+		{
+			continue;
+		}
+
+		const FVector FromWorldLocation = NodeWorldLocations[NetworkEdgeState.FromNodeIndex];
+		const FVector ToWorldLocation = NodeWorldLocations[NetworkEdgeState.ToNodeIndex];
+		const float FlowRateSigned = NetworkEdgeState.FlowRate;
+		const FColor FlowDebugColor = FlowRateSigned >= 0.0f ? FColor::Cyan : FColor::Orange;
+		const float LineThickness = FMath::Clamp(FMath::Abs(FlowRateSigned) * 0.02f, 1.2f, 10.0f);
+		DrawDebugLine(World, FromWorldLocation, ToWorldLocation, FlowDebugColor, false, 0.0f, 0, LineThickness);
+
+		if (DrawDetailedNodeLabels && FMath::Abs(FlowRateSigned) > KINDA_SMALL_NUMBER)
+		{
+			const FVector EdgeMidWorld = (FromWorldLocation + ToWorldLocation) * 0.5f;
+			const FVector EdgeDirectionWorld = (ToWorldLocation - FromWorldLocation).GetSafeNormal();
+			const FVector ArrowDirectionWorld = EdgeDirectionWorld * FMath::Sign(FlowRateSigned);
+			const float ArrowHalfLength = FMath::Clamp(FMath::Abs(FlowRateSigned) * 0.0015f, 8.0f, 120.0f);
+			const FVector ArrowStartWorld = EdgeMidWorld - ArrowDirectionWorld * ArrowHalfLength * 0.5f;
+			const FVector ArrowEndWorld = EdgeMidWorld + ArrowDirectionWorld * ArrowHalfLength * 0.5f;
+			DrawDebugDirectionalArrow(World, ArrowStartWorld, ArrowEndWorld, ArrowHalfLength * 0.35f, FColor::Yellow, false, 0.0f, 0, 2.0f);
+		}
 	}
 }

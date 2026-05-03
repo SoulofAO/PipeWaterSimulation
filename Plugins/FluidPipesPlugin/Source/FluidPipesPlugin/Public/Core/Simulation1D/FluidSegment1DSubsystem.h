@@ -3,7 +3,10 @@
 #include "CoreMinimal.h"
 #include "Data/FluidData.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "UObject/WeakObjectPtr.h"
 #include "FluidSegment1DSubsystem.generated.h"
+
+class APipeFluidPipeActor;
 
 UCLASS()
 class FLUIDPIPESPLUGIN_API UFluidSegment1DSubsystem : public UTickableWorldSubsystem
@@ -21,6 +24,11 @@ public:
 
 	const TArray<FFluidSegmentStateOneD>& GetSegmentStates() const;
 
+	UFUNCTION(BlueprintCallable, Category = "FluidOneD")
+	void ApplyImportedOneDSegments(const TArray<FFluidSegmentStateOneD>& Segments);
+
+	void ApplyImportedOneDSegments(const TArray<FFluidSegmentStateOneD>& Segments, const TArray<APipeFluidPipeActor*>& IncomingPipeActors);
+
 private:
 	void SimulateStep(float SimulationStepTime);
 	void SolveSegmentWaterHammerStep(const FFluidSegmentStateOneD& CurrentSegmentState, float SimulationStepTime, FFluidSegmentStateOneD& NextSegmentState) const;
@@ -29,9 +37,12 @@ private:
 	float ComputeStableStepTime(const FFluidSegmentStateOneD& SegmentState) const;
 	float GetCrossSectionArea(const FFluidSegmentStateOneD& SegmentState) const;
 	bool IsSegmentStateFinite(const FFluidSegmentStateOneD& SegmentState) const;
+	void DrawDebugOneDSegments(int32 DebugLevel) const;
 
 	UPROPERTY(EditAnywhere, Category = "FluidOneD")
 	TArray<FFluidSegmentStateOneD> SegmentStates;
+
+	TArray<TWeakObjectPtr<APipeFluidPipeActor>> SegmentPipeActors;
 
 	float AccumulatedTime = 0.0f;
 };

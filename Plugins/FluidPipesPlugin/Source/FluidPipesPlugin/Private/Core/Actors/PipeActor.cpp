@@ -1,27 +1,34 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-
 #include "Core/Actors/PipeActor.h"
 
-// Sets default values
+#include "Components/DynamicMeshComponent.h"
+#include "DynamicMesh/DynamicMesh3.h"
+
+void APipeActor::ClearFluidDynamicMeshGeometry()
+{
+	if (!FluidDynamicMeshComponent)
+	{
+		return;
+	}
+
+	FluidDynamicMeshComponent->EditMesh([](UE::Geometry::FDynamicMesh3& Mesh)
+		{
+			Mesh.Clear();
+		});
+}
+
 APipeActor::APipeActor()
 {
- 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = true;
-
+	PrimaryActorTick.bCanEverTick = false;
+	FluidDynamicMeshComponent = CreateDefaultSubobject<UDynamicMeshComponent>(TEXT("FluidDynamicMeshComponent"));
+	SetRootComponent(FluidDynamicMeshComponent);
 }
 
-// Called when the game starts or when spawned
-void APipeActor::BeginPlay()
+void APipeActor::OnConstruction(const FTransform& Transform)
 {
-	Super::BeginPlay();
-	
+	Super::OnConstruction(Transform);
+	RebuildFluidDynamicMesh();
 }
 
-// Called every frame
-void APipeActor::Tick(float DeltaTime)
+void APipeActor::RebuildFluidDynamicMesh()
 {
-	Super::Tick(DeltaTime);
-
 }
-

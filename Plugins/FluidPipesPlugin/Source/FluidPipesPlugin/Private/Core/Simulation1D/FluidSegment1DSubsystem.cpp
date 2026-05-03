@@ -1,5 +1,8 @@
 #include "Core/Simulation1D/FluidSegment1DSubsystem.h"
 
+#include "Core/Actors/PipeFluidPipeActor.h"
+#include "DrawDebugHelpers.h"
+#include "FluidPipesDrawDebug.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 
@@ -18,21 +21,25 @@ void UFluidSegment1DSubsystem::Deinitialize()
 void UFluidSegment1DSubsystem::Tick(float DeltaTime)
 {
 	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	if (!Settings->EnableFluidSegmentSimulationOneD)
+	if (Settings->EnableFluidSegmentSimulationOneD)
 	{
-		return;
+		AccumulatedTime += DeltaTime;
+		while (AccumulatedTime >= Settings->SimulationStepTimeOneD)
+		{
+			SimulateStep(Settings->SimulationStepTimeOneD);
+			AccumulatedTime -= Settings->SimulationStepTimeOneD;
+		}
 	}
 
-	AccumulatedTime += DeltaTime;
-	while (AccumulatedTime >= Settings->SimulationStepTimeOneD)
+	if (FluidPipesShouldEmitScreenDebugMessages())
 	{
-		SimulateStep(Settings->SimulationStepTimeOneD);
-		AccumulatedTime -= Settings->SimulationStepTimeOneD;
+		UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D Tick: Segments={0}"), { FString::FromInt(SegmentStates.Num()) }), true, false, FLinearColor(0.0f, 1.0f, 1.0f), 0.0f);
 	}
 
-	if (Settings->EnableFluidDebugMessages)
+	const int32 OneDWorldDebugDetailLevel = FluidPipesGetOneDWorldDebugDetailLevel();
+	if (OneDWorldDebugDetailLevel > 0)
 	{
-		UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D Tick: Segments={0}"), { SegmentStates.Num() }), true, false, FLinearColor::Cyan, 0.0f);
+		DrawDebugOneDSegments(OneDWorldDebugDetailLevel);
 	}
 }
 
@@ -44,12 +51,39 @@ TStatId UFluidSegment1DSubsystem::GetStatId() const
 void UFluidSegment1DSubsystem::ResetSimulationState()
 {
 	SegmentStates.Reset();
+	SegmentPipeActors.Reset();
 	AccumulatedTime = 0.0f;
 }
 
 const TArray<FFluidSegmentStateOneD>& UFluidSegment1DSubsystem::GetSegmentStates() const
 {
 	return SegmentStates;
+}
+
+void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegmentStateOneD>& Segments)
+{
+	TArray<APipeFluidPipeActor*> EmptyPipeActors;
+	ApplyImportedOneDSegments(Segments, EmptyPipeActors);
+}
+
+void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegmentStateOneD>& Segments, const TArray<APipeFluidPipeActor*>& IncomingPipeActors)
+{
+	SegmentStates = Segments;
+	SegmentPipeActors.Reset();
+	if (IncomingPipeActors.Num() == SegmentStates.Num())
+	{
+		SegmentPipeActors.Reserve(SegmentStates.Num());
+		for (APipeFluidPipeActor* IncomingPipeActor : IncomingPipeActors)
+		{
+			SegmentPipeActors.Add(IncomingPipeActor);
+		}
+	}
+
+	for (FFluidSegmentStateOneD& SegmentState : SegmentStates)
+	{
+		UpdateDerivedCellValues(SegmentState);
+	}
+	AccumulatedTime = 0.0f;
 }
 
 void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
@@ -64,9 +98,9 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 
 		const float StableStepTime = ComputeStableStepTime(SegmentState);
 		const float EffectiveStepTime = FMath::Min(SimulationStepTime, StableStepTime);
-		if (Settings->EnableFluidDebugMessages && SimulationStepTime > StableStepTime + KINDA_SMALL_NUMBER)
+		if (FluidPipesShouldEmitScreenDebugMessages() && SimulationStepTime > StableStepTime + KINDA_SMALL_NUMBER)
 		{
-			UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D CFL Limited: Requested={0}, Stable={1}"), { SimulationStepTime, StableStepTime }), true, false, FLinearColor::Yellow, 0.0f);
+			UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D CFL Limited: Requested={0}, Stable={1}"), { FString::SanitizeFloat(SimulationStepTime), FString::SanitizeFloat(StableStepTime) }), true, false, FLinearColor::Yellow, 0.0f);
 		}
 
 		FFluidSegmentStateOneD NextSegmentState = SegmentState;
@@ -189,4 +223,95 @@ bool UFluidSegment1DSubsystem::IsSegmentStateFinite(const FFluidSegmentStateOneD
 	}
 
 	return true;
+}
+
+void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
+{
+	UWorld* World = GetWorld();
+	if (!World || DebugLevel <= 0)
+	{
+		return;
+	}
+
+	const bool DrawCellLabels = DebugLevel >= 2;
+
+	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	{
+		const FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+		if (SegmentState.CellStates.Num() < 1)
+		{
+			continue;
+		}
+
+		const APipeFluidPipeActor* PipeActor = SegmentPipeActors.IsValidIndex(SegmentIndex) ? SegmentPipeActors[SegmentIndex].Get() : nullptr;
+		if (!PipeActor)
+		{
+			continue;
+		}
+
+		const FVector AxisDirectionWorld = PipeActor->GetActorForwardVector().GetSafeNormal();
+		const FVector CenterWorld = PipeActor->GetActorLocation();
+		const float HalfLength = SegmentState.SegmentLength * 0.5f;
+		const FVector AxisStartWorld = CenterWorld - AxisDirectionWorld * HalfLength;
+		const FVector AxisEndWorld = CenterWorld + AxisDirectionWorld * HalfLength;
+		const int32 CellCount = SegmentState.CellStates.Num();
+
+		float MinPressure = SegmentState.CellStates[0].Pressure;
+		float MaxPressure = MinPressure;
+		for (const FFluidSegmentCellStateOneD& CellState : SegmentState.CellStates)
+		{
+			MinPressure = FMath::Min(MinPressure, CellState.Pressure);
+			MaxPressure = FMath::Max(MaxPressure, CellState.Pressure);
+		}
+		const float PressureRange = FMath::Max(MaxPressure - MinPressure, KINDA_SMALL_NUMBER);
+
+		DrawDebugLine(World, AxisStartWorld, AxisEndWorld, FColor::White, false, 0.0f, 0, 1.5f);
+
+		const int32 LabelStride = CellCount <= 8 ? 1 : FMath::Max(1, CellCount / 6);
+
+		for (int32 CellIndex = 0; CellIndex < CellCount; ++CellIndex)
+		{
+			const float SampleParameter = (CellCount <= 1) ? 0.5f : (static_cast<float>(CellIndex) + 0.5f) / static_cast<float>(CellCount);
+			const FVector CellPositionWorld = AxisStartWorld + AxisDirectionWorld * (SampleParameter * SegmentState.SegmentLength);
+			const float NormalizedPressure = FMath::Clamp((SegmentState.CellStates[CellIndex].Pressure - MinPressure) / PressureRange, 0.0f, 1.0f);
+			const FColor PressureColor = FLinearColor::LerpUsingHSV(FLinearColor::Blue, FLinearColor::Red, NormalizedPressure).ToFColor(true);
+
+			DrawDebugSphere(World, CellPositionWorld, 8.0f, 8, PressureColor, false, 0.0f, 0, 1.0f);
+
+			const float FlowRate = SegmentState.CellStates[CellIndex].FlowRate;
+			if (FMath::Abs(FlowRate) > KINDA_SMALL_NUMBER)
+			{
+				const FVector FlowDirectionWorld = AxisDirectionWorld * FMath::Sign(FlowRate);
+				const float ArrowHalfLength = FMath::Clamp(FMath::Abs(FlowRate) * 0.001f, 5.0f, 80.0f);
+				const FVector ArrowStartWorld = CellPositionWorld - FlowDirectionWorld * ArrowHalfLength * 0.5f;
+				const FVector ArrowEndWorld = CellPositionWorld + FlowDirectionWorld * ArrowHalfLength * 0.5f;
+				DrawDebugDirectionalArrow(World, ArrowStartWorld, ArrowEndWorld, ArrowHalfLength * 0.35f, FColor(0, 255, 255), false, 0.0f, 0, 2.0f);
+			}
+
+			if (DrawCellLabels && (CellIndex % LabelStride == 0))
+			{
+				const FString CellLabel = FString::Format(
+					TEXT("Cell {0} P={1} Q={2}"),
+					{
+						FString::FromInt(CellIndex),
+						FString::SanitizeFloat(SegmentState.CellStates[CellIndex].Pressure),
+						FString::SanitizeFloat(FlowRate)
+					});
+				DrawDebugString(World, CellPositionWorld + FVector(0.0f, 0.0f, 15.0f), CellLabel, nullptr, FColor::White, 0.0f, true, 1.15f);
+			}
+		}
+
+		if (DrawCellLabels)
+		{
+			const FString SegmentLabel = FString::Format(
+				TEXT("{0} cells={1} Pmin={2} Pmax={3}"),
+				{
+					SegmentState.SegmentName.ToString(),
+					FString::FromInt(CellCount),
+					FString::SanitizeFloat(MinPressure),
+					FString::SanitizeFloat(MaxPressure)
+				});
+			DrawDebugString(World, CenterWorld + FVector(0.0f, 0.0f, 40.0f), SegmentLabel, nullptr, FColor::Yellow, 0.0f, true, 1.35f);
+		}
+	}
 }
