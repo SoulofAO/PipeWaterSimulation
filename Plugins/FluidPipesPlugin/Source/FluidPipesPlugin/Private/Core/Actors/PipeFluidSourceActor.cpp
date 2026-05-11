@@ -6,7 +6,28 @@
 
 APipeFluidSourceActor::APipeFluidSourceActor()
 {
-	SceneEndpointKind = EFluidSceneEndpointKind::Source;
+}
+
+FFluidNetworkNodeStateZeroD APipeFluidSourceActor::ImportFluidNetworkNodeStateZeroD() const
+{
+	FFluidNetworkNodeStateZeroD FluidImportedNetworkNodeStateZeroD;
+	FluidImportedNetworkNodeStateZeroD.NodeName = FName(*FString::Format(TEXT("{0}"), { FString::FromInt(SceneNodeKey) }));
+	return FluidImportedNetworkNodeStateZeroD;
+}
+
+FFluidSegmentStateOneD APipeFluidSourceActor::ImportFluidSegmentStateOneDEndpoint(FFluidSegmentStateOneD Segment, bool bLeftEndpoint) const
+{
+	if (bLeftEndpoint)
+	{
+		Segment.LeftBoundaryConditionType = EFluidBoundaryConditionTypeOneD::FixedPressure;
+		Segment.LeftBoundaryPressure = 0.0f;
+	}
+	else
+	{
+		Segment.RightBoundaryConditionType = EFluidBoundaryConditionTypeOneD::FixedPressure;
+		Segment.RightBoundaryPressure = 0.0f;
+	}
+	return Segment;
 }
 
 void APipeFluidSourceActor::RebuildFluidDynamicMesh()

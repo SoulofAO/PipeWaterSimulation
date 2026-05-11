@@ -12,6 +12,13 @@ class FLUIDPIPESPLUGIN_API APipeFluidConsumerActor : public APipeFluidBasePointA
 public:
 	APipeFluidConsumerActor();
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidPipeSceneConsumer")
+	float ConsumerVolumeFlowRateDemand = 0.0f;
+
+	virtual FFluidNetworkNodeStateZeroD ImportFluidNetworkNodeStateZeroD() const override;
+
+	virtual FFluidSegmentStateOneD ImportFluidSegmentStateOneDEndpoint(FFluidSegmentStateOneD Segment, bool bLeftEndpoint) const override;
+
 protected:
 	virtual void RebuildFluidDynamicMesh() override;
 };

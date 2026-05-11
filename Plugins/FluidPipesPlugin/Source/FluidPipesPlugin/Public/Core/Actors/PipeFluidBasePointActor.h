@@ -14,24 +14,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidPipeScene")
 	int32 SceneNodeKey = 0;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidPipeSceneZeroD")
-	FFluidNetworkNodeStateZeroD ZeroDNetworkNodeState;
+	virtual FFluidNetworkNodeStateZeroD ImportFluidNetworkNodeStateZeroD() const;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidPipeSceneOneD")
-	EFluidOneDJunctionPressurePolicy OneDJunctionPressurePolicy = EFluidOneDJunctionPressurePolicy::AverageNeighborPressure;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidPipeSceneOneD")
-	float OneDFixedJunctionPressure = 0.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidPipeSceneOneD")
-	float OneDExternalVolumeFlowRate = 0.0f;
-
-	EFluidSceneEndpointKind GetSceneEndpointKind() const;
-
-	void FillOneDJunctionTopologyDefaults(FFluidOneDJunctionTopologyOneD& JunctionTopology) const;
-
-	virtual void PostEditMove(bool bFinished) override;
-
-protected:
-	EFluidSceneEndpointKind SceneEndpointKind = EFluidSceneEndpointKind::Face;
+	virtual FFluidSegmentStateOneD ImportFluidSegmentStateOneDEndpoint(FFluidSegmentStateOneD Segment, bool bLeftEndpoint) const;
 };

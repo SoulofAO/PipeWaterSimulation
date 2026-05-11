@@ -6,7 +6,13 @@
 
 APipeFluidPointActor::APipeFluidPointActor()
 {
-	SceneEndpointKind = EFluidSceneEndpointKind::Face;
+}
+
+FFluidNetworkNodeStateZeroD APipeFluidPointActor::ImportFluidNetworkNodeStateZeroD() const
+{
+	FFluidNetworkNodeStateZeroD FluidImportedNetworkNodeStateZeroD;
+	FluidImportedNetworkNodeStateZeroD.NodeName = FName(*FString::Format(TEXT("{0}"), { FString::FromInt(SceneNodeKey) }));
+	return FluidImportedNetworkNodeStateZeroD;
 }
 
 void APipeFluidPointActor::RebuildFluidDynamicMesh()

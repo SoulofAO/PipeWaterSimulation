@@ -12,6 +12,8 @@ class FLUIDPIPESPLUGIN_API APipeFluidPointActor : public APipeFluidBasePointActo
 public:
 	APipeFluidPointActor();
 
+	virtual FFluidNetworkNodeStateZeroD ImportFluidNetworkNodeStateZeroD() const override;
+
 protected:
 	virtual void RebuildFluidDynamicMesh() override;
 };
