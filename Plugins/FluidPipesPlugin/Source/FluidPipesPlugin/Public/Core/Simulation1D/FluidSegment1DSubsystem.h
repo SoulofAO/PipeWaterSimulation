@@ -38,9 +38,7 @@ private:
 
 	void SimulateStep(float SimulationStepTime);
 	void RebuildJunctionSceneNodeKeyTopology();
-	void RebuildSceneNodeKeyToZeroDNodeIndexMap();
 	void ApplyJunctionCouplingToNextSegmentStates(const TArray<FFluidSegmentStateOneD>& CurrentSegmentStates, TArray<FFluidSegmentStateOneD>& NextSegmentStates) const;
-	void ApplySceneNodeZeroDPressuresToNextSegmentStates(const TArray<FFluidSegmentStateOneD>& CurrentSegmentStates, TArray<FFluidSegmentStateOneD>& NextSegmentStates);
 	void SolveSegmentWaterHammerStep(const FFluidSegmentStateOneD& CurrentSegmentState, float SimulationStepTime, float GravityAccelerationAlongAxis, FFluidSegmentStateOneD& NextSegmentState) const;
 	void ApplyBoundaryConditions(const FFluidSegmentStateOneD& CurrentSegmentState, FFluidSegmentStateOneD& NextSegmentState) const;
 	void UpdateDerivedCellValues(FFluidSegmentStateOneD& SegmentState) const;
@@ -55,8 +53,6 @@ private:
 	TArray<TWeakObjectPtr<APipeFluidPipeActor>> SegmentPipeActors;
 
 	TMap<int32, TArray<FFluidOneDJunctionEndpointIncident>> JunctionSceneNodeKeyToIncidentEndpoints;
-
-	TMap<int32, int32> SceneNodeKeyToZeroDNodeIndex;
 
 	float AccumulatedTime = 0.0f;
 };
