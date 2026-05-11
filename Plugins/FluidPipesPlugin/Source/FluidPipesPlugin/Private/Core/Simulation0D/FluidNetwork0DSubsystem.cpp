@@ -8,6 +8,47 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 
+static void CollectFluidPipeBasePointActorsOrderedSameAsZeroDimensionImport(UWorld* World, TArray<APipeFluidBasePointActor*>& OutOrderedUniqueActors)
+{
+	OutOrderedUniqueActors.Reset();
+	if (!World)
+	{
+		return;
+	}
+
+	TArray<APipeFluidBasePointActor*> AllPointActors;
+	for (TActorIterator<APipeFluidBasePointActor> Iterator(World); Iterator; ++Iterator)
+	{
+		if (*Iterator)
+		{
+			AllPointActors.Add(*Iterator);
+		}
+	}
+
+	AllPointActors.Sort([](const APipeFluidBasePointActor& Left, const APipeFluidBasePointActor& Right)
+		{
+			return Left.SceneNodeKey < Right.SceneNodeKey;
+		});
+
+	TSet<int32> SeenSceneNodeKeys;
+	for (APipeFluidBasePointActor* PointActor : AllPointActors)
+	{
+		if (!PointActor)
+		{
+			continue;
+		}
+
+		const int32 SceneNodeKey = PointActor->SceneNodeKey;
+		if (SeenSceneNodeKeys.Contains(SceneNodeKey))
+		{
+			continue;
+		}
+
+		SeenSceneNodeKeys.Add(SceneNodeKey);
+		OutOrderedUniqueActors.Add(PointActor);
+	}
+}
+
 void UFluidNetwork0DSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
@@ -76,9 +117,34 @@ void UFluidNetwork0DSubsystem::ApplyImportedZeroDNetwork(const TArray<FFluidNetw
 
 void UFluidNetwork0DSubsystem::SimulateStep(float SimulationStepTime)
 {
+	RefreshNetworkNodeExternalFlowsFromWorldPointActors();
 	UpdateEdgeFlows(SimulationStepTime);
 	IntegrateNodeVolumes(SimulationStepTime);
 	UpdateNodePressures();
+}
+
+void UFluidNetwork0DSubsystem::RefreshNetworkNodeExternalFlowsFromWorldPointActors()
+{
+	UWorld* World = GetWorld();
+	if (!World || NetworkNodeStates.Num() == 0)
+	{
+		return;
+	}
+
+	TArray<APipeFluidBasePointActor*> OrderedActors;
+	CollectFluidPipeBasePointActorsOrderedSameAsZeroDimensionImport(World, OrderedActors);
+	const int32 UpdateCount = FMath::Min(OrderedActors.Num(), NetworkNodeStates.Num());
+	for (int32 NodeIndex = 0; NodeIndex < UpdateCount; ++NodeIndex)
+	{
+		APipeFluidBasePointActor* PointActor = OrderedActors[NodeIndex];
+		if (!PointActor)
+		{
+			continue;
+		}
+
+		const float GaugePressure = NetworkNodeStates[NodeIndex].Pressure;
+		NetworkNodeStates[NodeIndex].SourceFlow = PointActor->EvaluateRuntimeZeroDimensionExternalVolumeFlowContribution(GaugePressure);
+	}
 }
 
 void UFluidNetwork0DSubsystem::UpdateEdgeFlows(float SimulationStepTime)

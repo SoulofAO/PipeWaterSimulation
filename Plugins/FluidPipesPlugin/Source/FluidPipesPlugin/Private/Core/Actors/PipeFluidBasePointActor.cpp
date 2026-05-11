@@ -1,4 +1,5 @@
 #include "Core/Actors/PipeFluidBasePointActor.h"
+#include "Core/Actors/PipeFluidPipeActor.h"
 #include "EngineUtils.h"
 
 static void ResolveAllFluidPipePointSceneNodeKeysInWorld(UWorld* World)
@@ -68,6 +69,33 @@ void APipeFluidBasePointActor::PostDuplicate(EDuplicateMode::Type DuplicateMode)
 	ResolveAllFluidPipePointSceneNodeKeysInWorld(GetWorld());
 }
 
+#if WITH_EDITOR
+void APipeFluidBasePointActor::PostEditMove(bool bFinished)
+{
+	Super::PostEditMove(bFinished);
+
+	UWorld* World = GetWorld();
+	if (!World || World->IsPreviewWorld())
+	{
+		return;
+	}
+
+	for (TActorIterator<APipeFluidPipeActor> Iterator(World); Iterator; ++Iterator)
+	{
+		APipeFluidPipeActor* PipeActor = *Iterator;
+		if (!PipeActor || PipeActor->IsTemplate())
+		{
+			continue;
+		}
+
+		if (PipeActor->PipeEndpointFirst == this || PipeActor->PipeEndpointSecond == this)
+		{
+			PipeActor->EditorRefreshFluidPipeAttachmentToAttachedEndpoints();
+		}
+	}
+}
+#endif
+
 FFluidNetworkNodeStateZeroD APipeFluidBasePointActor::ImportFluidNetworkNodeStateZeroD() const
 {
 	return FFluidNetworkNodeStateZeroD();
@@ -76,4 +104,14 @@ FFluidNetworkNodeStateZeroD APipeFluidBasePointActor::ImportFluidNetworkNodeStat
 FFluidSegmentStateOneD APipeFluidBasePointActor::ImportFluidSegmentStateOneDEndpoint(FFluidSegmentStateOneD Segment, bool) const
 {
 	return Segment;
+}
+
+float APipeFluidBasePointActor::EvaluateRuntimeZeroDimensionExternalVolumeFlowContribution(float) const
+{
+	return 0.0f;
+}
+
+float APipeFluidBasePointActor::ComputeRuntimeSignedVolumeFlowRateForOneDimensionPipeBoundary(bool, float) const
+{
+	return 0.0f;
 }

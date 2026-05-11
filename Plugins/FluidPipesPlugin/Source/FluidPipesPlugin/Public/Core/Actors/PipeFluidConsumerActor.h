@@ -19,6 +19,10 @@ public:
 
 	virtual FFluidSegmentStateOneD ImportFluidSegmentStateOneDEndpoint(FFluidSegmentStateOneD Segment, bool bLeftEndpoint) const override;
 
+	virtual float EvaluateRuntimeZeroDimensionExternalVolumeFlowContribution(float NodeGaugePressure) const override;
+
+	virtual float ComputeRuntimeSignedVolumeFlowRateForOneDimensionPipeBoundary(bool bLowAxisPipeAttachedEndpoint, float BoundaryAdjacentCellGaugePressure) const override;
+
 protected:
 	virtual void RebuildFluidDynamicMesh() override;
 };

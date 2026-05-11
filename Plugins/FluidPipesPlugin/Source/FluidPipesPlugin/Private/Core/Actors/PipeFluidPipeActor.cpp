@@ -76,8 +76,9 @@ void APipeFluidPipeActor::RefreshObservedEndpointLocations()
 void APipeFluidPipeActor::UpdateEndpointFollowingTickEnabled()
 {
 	const UWorld* World = GetWorld();
-	const bool FollowEndpointsInGameWorld = World && World->IsGameWorld() && PipeEndpointFirst && PipeEndpointSecond;
-	SetActorTickEnabled(FollowEndpointsInGameWorld);
+	const bool FollowEndpointsInSimulatingWorld = World && !World->IsPreviewWorld() && (World->IsGameWorld() || World->IsEditorWorld());
+	const bool FollowEndpointsWhenBothEndpointsAssigned = FollowEndpointsInSimulatingWorld && PipeEndpointFirst && PipeEndpointSecond;
+	SetActorTickEnabled(FollowEndpointsWhenBothEndpointsAssigned);
 }
 
 void APipeFluidPipeActor::OnConstruction(const FTransform& Transform)
@@ -87,6 +88,16 @@ void APipeFluidPipeActor::OnConstruction(const FTransform& Transform)
 	UpdateEndpointFollowingTickEnabled();
 	Super::OnConstruction(Transform);
 }
+
+#if WITH_EDITOR
+void APipeFluidPipeActor::EditorRefreshFluidPipeAttachmentToAttachedEndpoints()
+{
+	UpdateFluidPipeAttachmentToEndpoints();
+	RefreshObservedEndpointLocations();
+	RebuildFluidDynamicMesh();
+	UpdateEndpointFollowingTickEnabled();
+}
+#endif
 
 void APipeFluidPipeActor::RebuildFluidDynamicMesh()
 {

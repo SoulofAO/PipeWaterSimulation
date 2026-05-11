@@ -39,6 +39,21 @@ FFluidSegmentStateOneD APipeFluidConsumerActor::ImportFluidSegmentStateOneDEndpo
 	return Segment;
 }
 
+float APipeFluidConsumerActor::EvaluateRuntimeZeroDimensionExternalVolumeFlowContribution(float) const
+{
+	return -FMath::Abs(ConsumerVolumeFlowRateDemand);
+}
+
+float APipeFluidConsumerActor::ComputeRuntimeSignedVolumeFlowRateForOneDimensionPipeBoundary(bool bLowAxisPipeAttachedEndpoint, float) const
+{
+	const float DemandMagnitude = FMath::Abs(ConsumerVolumeFlowRateDemand);
+	if (DemandMagnitude <= KINDA_SMALL_NUMBER)
+	{
+		return 0.0f;
+	}
+	return bLowAxisPipeAttachedEndpoint ? -DemandMagnitude : DemandMagnitude;
+}
+
 void APipeFluidConsumerActor::RebuildFluidDynamicMesh()
 {
 	ClearFluidDynamicMeshGeometry();

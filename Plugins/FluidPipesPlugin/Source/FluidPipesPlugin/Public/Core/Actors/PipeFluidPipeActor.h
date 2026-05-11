@@ -59,6 +59,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidPipeScenePhysics")
 	FName PipeSegmentName = NAME_None;
 
+#if WITH_EDITOR
+	void EditorRefreshFluidPipeAttachmentToAttachedEndpoints();
+#endif
+
 protected:
 	virtual void RebuildFluidDynamicMesh() override;
 

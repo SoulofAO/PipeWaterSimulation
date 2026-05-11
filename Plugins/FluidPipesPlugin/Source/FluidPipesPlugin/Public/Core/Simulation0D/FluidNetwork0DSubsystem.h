@@ -28,6 +28,7 @@ public:
 
 private:
 	void SimulateStep(float SimulationStepTime);
+	void RefreshNetworkNodeExternalFlowsFromWorldPointActors();
 	void UpdateEdgeFlows(float SimulationStepTime);
 	void IntegrateNodeVolumes(float SimulationStepTime);
 	void UpdateNodePressures();

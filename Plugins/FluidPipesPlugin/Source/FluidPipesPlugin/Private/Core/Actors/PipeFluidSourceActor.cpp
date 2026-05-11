@@ -37,6 +37,21 @@ FFluidSegmentStateOneD APipeFluidSourceActor::ImportFluidSegmentStateOneDEndpoin
 	return Segment;
 }
 
+float APipeFluidSourceActor::EvaluateRuntimeZeroDimensionExternalVolumeFlowContribution(float) const
+{
+	return FMath::Max(0.0f, SourceVolumeFlowRate);
+}
+
+float APipeFluidSourceActor::ComputeRuntimeSignedVolumeFlowRateForOneDimensionPipeBoundary(bool bLowAxisPipeAttachedEndpoint, float) const
+{
+	const float SupplyMagnitude = FMath::Max(0.0f, SourceVolumeFlowRate);
+	if (SupplyMagnitude <= KINDA_SMALL_NUMBER)
+	{
+		return 0.0f;
+	}
+	return bLowAxisPipeAttachedEndpoint ? SupplyMagnitude : -SupplyMagnitude;
+}
+
 void APipeFluidSourceActor::RebuildFluidDynamicMesh()
 {
 	ClearFluidDynamicMeshGeometry();

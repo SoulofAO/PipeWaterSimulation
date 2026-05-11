@@ -1,5 +1,6 @@
 #include "Core/Simulation1D/FluidSegment1DSubsystem.h"
 
+#include "Core/Actors/PipeFluidBasePointActor.h"
 #include "Core/Actors/PipeFluidPipeActor.h"
 #include "DrawDebugHelpers.h"
 #include "FluidPipesDrawDebug.h"
@@ -206,12 +207,61 @@ void UFluidSegment1DSubsystem::ApplyJunctionCouplingToNextSegmentStates(const TA
 	}
 }
 
+void UFluidSegment1DSubsystem::UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors()
+{
+	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	{
+		FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+		if (SegmentState.CellStates.Num() < 2)
+		{
+			continue;
+		}
+
+		if (!SegmentPipeActors.IsValidIndex(SegmentIndex))
+		{
+			continue;
+		}
+
+		APipeFluidPipeActor* PipeActor = SegmentPipeActors[SegmentIndex].Get();
+		if (!PipeActor)
+		{
+			continue;
+		}
+
+		if (SegmentState.LeftBoundaryConditionType == EFluidBoundaryConditionTypeOneD::FixedFlow)
+		{
+			if (APipeFluidBasePointActor* FirstEndpoint = PipeActor->PipeEndpointFirst)
+			{
+				if (FirstEndpoint->SceneNodeKey == SegmentState.LeftSceneNodeKey)
+				{
+					const float BoundaryAdjacentCellGaugePressure = SegmentState.CellStates[0].Pressure;
+					SegmentState.LeftBoundaryFlow = FirstEndpoint->ComputeRuntimeSignedVolumeFlowRateForOneDimensionPipeBoundary(true, BoundaryAdjacentCellGaugePressure);
+				}
+			}
+		}
+
+		if (SegmentState.RightBoundaryConditionType == EFluidBoundaryConditionTypeOneD::FixedFlow)
+		{
+			if (APipeFluidBasePointActor* SecondEndpoint = PipeActor->PipeEndpointSecond)
+			{
+				if (SecondEndpoint->SceneNodeKey == SegmentState.RightSceneNodeKey)
+				{
+					const int32 LastBoundaryCellIndex = SegmentState.CellStates.Num() - 1;
+					const float BoundaryAdjacentCellGaugePressure = SegmentState.CellStates[LastBoundaryCellIndex].Pressure;
+					SegmentState.RightBoundaryFlow = SecondEndpoint->ComputeRuntimeSignedVolumeFlowRateForOneDimensionPipeBoundary(false, BoundaryAdjacentCellGaugePressure);
+				}
+			}
+		}
+	}
+}
+
 void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 {
 	const UWorld* World = GetWorld();
 	const float GravityAcceleration = World ? FMath::Abs(World->GetGravityZ()) : 980.0f;
 	const FVector GravityDirectionWorld = FVector::UpVector;
 
+	UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors();
 	RebuildJunctionSceneNodeKeyTopology();
 
 	TArray<FFluidSegmentStateOneD> NextSegmentStates;

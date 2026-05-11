@@ -37,6 +37,7 @@ private:
 	};
 
 	void SimulateStep(float SimulationStepTime);
+	void UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors();
 	void RebuildJunctionSceneNodeKeyTopology();
 	void ApplyJunctionCouplingToNextSegmentStates(const TArray<FFluidSegmentStateOneD>& CurrentSegmentStates, TArray<FFluidSegmentStateOneD>& NextSegmentStates) const;
 	void SolveSegmentWaterHammerStep(const FFluidSegmentStateOneD& CurrentSegmentState, float SimulationStepTime, float GravityAccelerationAlongAxis, FFluidSegmentStateOneD& NextSegmentState) const;
