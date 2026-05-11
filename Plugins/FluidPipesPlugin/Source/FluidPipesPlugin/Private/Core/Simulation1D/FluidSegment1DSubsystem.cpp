@@ -3,6 +3,7 @@
 #include "Core/Actors/PipeFluidPipeActor.h"
 #include "DrawDebugHelpers.h"
 #include "FluidPipesDrawDebug.h"
+#include "FluidPipesWorldDebugText.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 
@@ -247,6 +248,8 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 		return;
 	}
 
+	const ULazyFluidPipesDeveloperSettings* WorldDebugSettings = GetDefault<ULazyFluidPipesDeveloperSettings>();
+	const bool DrawOneDWireGeometry = WorldDebugSettings->WorldDebugIncludeOneDWireGeometry;
 	const bool DrawSegmentAndEndpointText = DebugLevel >= 1;
 	const bool DrawPerCellText = DebugLevel >= 2;
 	const bool DrawEveryCellText = DebugLevel >= 3;
@@ -288,50 +291,59 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 		}
 		LateralWorld = LateralWorld.GetSafeNormal();
 
-		DrawDebugLine(World, AxisStartWorld, AxisEndWorld, FColor::White, false, 0.0f, 0, 1.5f);
+		if (DrawOneDWireGeometry)
+		{
+			DrawDebugLine(World, AxisStartWorld, AxisEndWorld, FColor::White, false, 0.0f, 0, 1.5f);
+		}
 
 		const float StableStepTime = ComputeStableStepTime(SegmentState);
 		const float CrossSectionArea = GetCrossSectionArea(SegmentState);
 
 		if (DrawSegmentAndEndpointText)
 		{
-			const FString SegmentSummaryLine = FString::Format(
-				TEXT("{0} | cells={1} L={2} dx={3} | c={4} D={5} rho={6} f={7} | A={8} dtStable={9} | Pmin={10} Pmax={11}"),
-				{
-					SegmentState.SegmentName.ToString(),
-					FString::FromInt(CellCount),
-					FString::SanitizeFloat(SegmentState.SegmentLength),
-					FString::SanitizeFloat(SegmentState.CellLength),
-					FString::SanitizeFloat(SegmentState.WaveSpeed),
-					FString::SanitizeFloat(SegmentState.PipeDiameter),
-					FString::SanitizeFloat(SegmentState.Density),
-					FString::SanitizeFloat(SegmentState.FrictionFactor),
-					FString::SanitizeFloat(CrossSectionArea),
-					FString::SanitizeFloat(StableStepTime),
-					FString::SanitizeFloat(MinPressure),
-					FString::SanitizeFloat(MaxPressure)
-				});
-			DrawDebugString(World, CenterWorld + FVector(0.0f, 0.0f, 48.0f), SegmentSummaryLine, nullptr, FColor::Yellow, 0.0f, true, 1.0f);
+			if (WorldDebugSettings->WorldDebugIncludeOneDSegmentSummary)
+			{
+				const FString SegmentSummaryLine = FString::Format(
+					TEXT("{0} | cells={1} L={2} dx={3} | c={4} D={5} rho={6} f={7} | A={8} dtStable={9} | Pmin={10} Pmax={11}"),
+					{
+						SegmentState.SegmentName.ToString(),
+						FString::FromInt(CellCount),
+						FString::SanitizeFloat(SegmentState.SegmentLength),
+						FString::SanitizeFloat(SegmentState.CellLength),
+						FString::SanitizeFloat(SegmentState.WaveSpeed),
+						FString::SanitizeFloat(SegmentState.PipeDiameter),
+						FString::SanitizeFloat(SegmentState.Density),
+						FString::SanitizeFloat(SegmentState.FrictionFactor),
+						FString::SanitizeFloat(CrossSectionArea),
+						FString::SanitizeFloat(StableStepTime),
+						FString::SanitizeFloat(MinPressure),
+						FString::SanitizeFloat(MaxPressure)
+					});
+				FluidPipesWorldDebugTextQueueString(World, CenterWorld + FVector(0.0f, 0.0f, 48.0f), SegmentSummaryLine, FColor::Yellow, 1.0f);
+			}
 
-			const FString LeftEndpointLine = FString::Format(
-				TEXT("Start | nodeKey={0} | {1} | cell0 P={2} Q={3}"),
-				{
-					FString::FromInt(SegmentState.LeftSceneNodeKey),
-					FluidOneDBoundaryStateDisplayString(SegmentState.LeftBoundaryConditionType, SegmentState.LeftBoundaryPressure, SegmentState.LeftBoundaryFlow),
-					FString::SanitizeFloat(SegmentState.CellStates[0].Pressure),
-					FString::SanitizeFloat(SegmentState.CellStates[0].FlowRate)
-				});
-			DrawDebugString(World, AxisStartWorld + FVector(0.0f, 0.0f, 28.0f) + LateralWorld * 18.0f, LeftEndpointLine, nullptr, FColor::Cyan, 0.0f, true, 1.0f);
+			if (WorldDebugSettings->WorldDebugIncludeOneDEndpointCaptions)
+			{
+				const FString LeftEndpointLine = FString::Format(
+					TEXT("Start | nodeKey={0} | {1} | cell0 P={2} Q={3}"),
+					{
+						FString::FromInt(SegmentState.LeftSceneNodeKey),
+						FluidOneDBoundaryStateDisplayString(SegmentState.LeftBoundaryConditionType, SegmentState.LeftBoundaryPressure, SegmentState.LeftBoundaryFlow),
+						FString::SanitizeFloat(SegmentState.CellStates[0].Pressure),
+						FString::SanitizeFloat(SegmentState.CellStates[0].FlowRate)
+					});
+				FluidPipesWorldDebugTextQueueString(World, AxisStartWorld + FVector(0.0f, 0.0f, 28.0f) + LateralWorld * 18.0f, LeftEndpointLine, FColor::Cyan, 1.0f);
 
-			const FString RightEndpointLine = FString::Format(
-				TEXT("End | nodeKey={0} | {1} | cellLast P={2} Q={3}"),
-				{
-					FString::FromInt(SegmentState.RightSceneNodeKey),
-					FluidOneDBoundaryStateDisplayString(SegmentState.RightBoundaryConditionType, SegmentState.RightBoundaryPressure, SegmentState.RightBoundaryFlow),
-					FString::SanitizeFloat(SegmentState.CellStates[CellCount - 1].Pressure),
-					FString::SanitizeFloat(SegmentState.CellStates[CellCount - 1].FlowRate)
-				});
-			DrawDebugString(World, AxisEndWorld + FVector(0.0f, 0.0f, 28.0f) - LateralWorld * 18.0f, RightEndpointLine, nullptr, FColor::Cyan, 0.0f, true, 1.0f);
+				const FString RightEndpointLine = FString::Format(
+					TEXT("End | nodeKey={0} | {1} | cellLast P={2} Q={3}"),
+					{
+						FString::FromInt(SegmentState.RightSceneNodeKey),
+						FluidOneDBoundaryStateDisplayString(SegmentState.RightBoundaryConditionType, SegmentState.RightBoundaryPressure, SegmentState.RightBoundaryFlow),
+						FString::SanitizeFloat(SegmentState.CellStates[CellCount - 1].Pressure),
+						FString::SanitizeFloat(SegmentState.CellStates[CellCount - 1].FlowRate)
+					});
+				FluidPipesWorldDebugTextQueueString(World, AxisEndWorld + FVector(0.0f, 0.0f, 28.0f) - LateralWorld * 18.0f, RightEndpointLine, FColor::Cyan, 1.0f);
+			}
 		}
 
 		const int32 LabelStride = DrawEveryCellText ? 1 : (CellCount <= 10 ? 1 : FMath::Max(1, CellCount / 8));
@@ -343,10 +355,13 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 			const float NormalizedPressure = FMath::Clamp((SegmentState.CellStates[CellIndex].Pressure - MinPressure) / PressureRange, 0.0f, 1.0f);
 			const FColor PressureColor = FLinearColor::LerpUsingHSV(FLinearColor::Blue, FLinearColor::Red, NormalizedPressure).ToFColor(true);
 
-			DrawDebugSphere(World, CellPositionWorld, 8.0f, 8, PressureColor, false, 0.0f, 0, 1.0f);
+			if (DrawOneDWireGeometry)
+			{
+				DrawDebugSphere(World, CellPositionWorld, 8.0f, 8, PressureColor, false, 0.0f, 0, 1.0f);
+			}
 
 			const float FlowRate = SegmentState.CellStates[CellIndex].FlowRate;
-			if (FMath::Abs(FlowRate) > KINDA_SMALL_NUMBER)
+			if (DrawOneDWireGeometry && FMath::Abs(FlowRate) > KINDA_SMALL_NUMBER)
 			{
 				const FVector FlowDirectionWorld = AxisDirectionWorld * FMath::Sign(FlowRate);
 				const float ArrowHalfLength = FMath::Clamp(FMath::Abs(FlowRate) * 0.001f, 5.0f, 80.0f);
@@ -355,7 +370,7 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 				DrawDebugDirectionalArrow(World, ArrowStartWorld, ArrowEndWorld, ArrowHalfLength * 0.35f, FColor(0, 255, 255), false, 0.0f, 0, 2.0f);
 			}
 
-			if (DrawPerCellText && (CellIndex % LabelStride == 0))
+			if (WorldDebugSettings->WorldDebugIncludeOneDPerCellCaptions && DrawPerCellText && (CellIndex % LabelStride == 0))
 			{
 				const FFluidSegmentCellStateOneD& CellState = SegmentState.CellStates[CellIndex];
 				const FString CellLabel = FString::Format(
@@ -369,7 +384,7 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 					});
 				const float StaggerScale = 14.0f;
 				const FVector StaggerWorld = LateralWorld * StaggerScale * static_cast<float>((CellIndex % 5) - 2);
-				DrawDebugString(World, CellPositionWorld + FVector(0.0f, 0.0f, 18.0f) + StaggerWorld, CellLabel, nullptr, FColor::White, 0.0f, true, 1.0f);
+				FluidPipesWorldDebugTextQueueString(World, CellPositionWorld + FVector(0.0f, 0.0f, 18.0f) + StaggerWorld, CellLabel, FColor::White, 1.0f);
 			}
 		}
 	}

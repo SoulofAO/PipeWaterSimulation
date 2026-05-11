@@ -4,6 +4,7 @@
 #include "DrawDebugHelpers.h"
 #include "EngineUtils.h"
 #include "FluidPipesDrawDebug.h"
+#include "FluidPipesWorldDebugText.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 
@@ -145,6 +146,9 @@ void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
 		return;
 	}
 
+	const ULazyFluidPipesDeveloperSettings* WorldDebugSettings = GetDefault<ULazyFluidPipesDeveloperSettings>();
+	const bool DrawZeroDWireGeometry = WorldDebugSettings->WorldDebugIncludeZeroDWireGeometry;
+
 	TArray<APipeFluidBasePointActor*> PointActors;
 	for (TActorIterator<APipeFluidBasePointActor> Iterator(World); Iterator; ++Iterator)
 	{
@@ -197,7 +201,6 @@ void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
 	}
 
 	const float PressureSpan = FMath::Max(MaximumPressure - MinimumPressure, KINDA_SMALL_NUMBER);
-	const bool DrawDetailedNodeLabels = FluidPipesShouldEmitScreenDebugMessages();
 
 	for (int32 NodeIndex = 0; NodeIndex < NetworkNodeStates.Num(); ++NodeIndex)
 	{
@@ -205,9 +208,12 @@ void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
 		const FFluidNetworkNodeStateZeroD& NetworkNodeState = NetworkNodeStates[NodeIndex];
 		const float NormalizedPressure = FMath::Clamp((NetworkNodeState.Pressure - MinimumPressure) / PressureSpan, 0.0f, 1.0f);
 		const FColor PressureDebugColor = FLinearColor::LerpUsingHSV(FLinearColor::Blue, FLinearColor::Red, NormalizedPressure).ToFColor(true);
-		DrawDebugSphere(World, NodeWorldLocation, 14.0f, 10, PressureDebugColor, false, 0.0f, 0, 1.5f);
+		if (DrawZeroDWireGeometry)
+		{
+			DrawDebugSphere(World, NodeWorldLocation, 14.0f, 10, PressureDebugColor, false, 0.0f, 0, 1.5f);
+		}
 
-		if (DrawDetailedNodeLabels)
+		if (WorldDebugSettings->WorldDebugIncludeZeroDNodeCaptions)
 		{
 			const FString NodeDebugLabel = FString::Format(
 				TEXT("{0} P={1} V={2} SrcQ={3}"),
@@ -217,7 +223,7 @@ void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
 					FString::SanitizeFloat(NetworkNodeState.StoredVolume),
 					FString::SanitizeFloat(NetworkNodeState.SourceFlow)
 				});
-			DrawDebugString(World, NodeWorldLocation + FVector(0.0f, 0.0f, 28.0f), NodeDebugLabel, nullptr, FColor::White, 0.0f, true, 1.1f);
+			FluidPipesWorldDebugTextQueueString(World, NodeWorldLocation + FVector(0.0f, 0.0f, 28.0f), NodeDebugLabel, FColor::White, 1.1f);
 		}
 	}
 
@@ -233,9 +239,12 @@ void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
 		const float FlowRateSigned = NetworkEdgeState.FlowRate;
 		const FColor FlowDebugColor = FlowRateSigned >= 0.0f ? FColor::Cyan : FColor::Orange;
 		const float LineThickness = FMath::Clamp(FMath::Abs(FlowRateSigned) * 0.02f, 1.2f, 10.0f);
-		DrawDebugLine(World, FromWorldLocation, ToWorldLocation, FlowDebugColor, false, 0.0f, 0, LineThickness);
+		if (DrawZeroDWireGeometry)
+		{
+			DrawDebugLine(World, FromWorldLocation, ToWorldLocation, FlowDebugColor, false, 0.0f, 0, LineThickness);
+		}
 
-		if (DrawDetailedNodeLabels && FMath::Abs(FlowRateSigned) > KINDA_SMALL_NUMBER)
+		if (DrawZeroDWireGeometry && WorldDebugSettings->WorldDebugIncludeZeroDFlowArrows && FMath::Abs(FlowRateSigned) > KINDA_SMALL_NUMBER)
 		{
 			const FVector EdgeMidWorld = (FromWorldLocation + ToWorldLocation) * 0.5f;
 			const FVector EdgeDirectionWorld = (ToWorldLocation - FromWorldLocation).GetSafeNormal();

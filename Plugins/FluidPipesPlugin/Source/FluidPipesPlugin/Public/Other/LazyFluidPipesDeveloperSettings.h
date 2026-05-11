@@ -38,4 +38,40 @@ public:
 
 	UPROPERTY(EditAnywhere, Config, Category = "FluidLevelImport")
 	EFluidLevelPipeImportTarget LevelPipeImportTarget = EFluidLevelPipeImportTarget::Disabled;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidPipesWorldDebug", meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float WorldDebugMaximumDrawDistanceCentimeters = 4000.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidPipesWorldDebug")
+	bool WorldDebugPerspectiveFontScaling = true;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidPipesWorldDebug", meta = (ClampMin = "50.0", UIMin = "50.0"))
+	float WorldDebugPerspectiveFontReferenceDistanceCentimeters = 450.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidPipesWorldDebug", meta = (ClampMin = "0.05", UIMin = "0.05", ClampMax = "1.0", UIMax = "1.0"))
+	float WorldDebugPerspectiveFontMinimumMultiplier = 0.35f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidPipesWorldDebug", meta = (ClampMin = "1.0", UIMin = "1.0", ClampMax = "6.0", UIMax = "6.0"))
+	float WorldDebugPerspectiveFontMaximumMultiplier = 2.5f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidPipesWorldDebug")
+	bool WorldDebugIncludeOneDWireGeometry = true;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidPipesWorldDebug")
+	bool WorldDebugIncludeOneDSegmentSummary = true;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidPipesWorldDebug")
+	bool WorldDebugIncludeOneDEndpointCaptions = true;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidPipesWorldDebug")
+	bool WorldDebugIncludeOneDPerCellCaptions = true;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidPipesWorldDebug")
+	bool WorldDebugIncludeZeroDWireGeometry = true;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidPipesWorldDebug")
+	bool WorldDebugIncludeZeroDNodeCaptions = true;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidPipesWorldDebug")
+	bool WorldDebugIncludeZeroDFlowArrows = true;
 };
