@@ -31,7 +31,7 @@ public:
 
 private:
 	void SimulateStep(float SimulationStepTime);
-	void SolveSegmentWaterHammerStep(const FFluidSegmentStateOneD& CurrentSegmentState, float SimulationStepTime, FFluidSegmentStateOneD& NextSegmentState) const;
+	void SolveSegmentWaterHammerStep(const FFluidSegmentStateOneD& CurrentSegmentState, float SimulationStepTime, float GravityAccelerationAlongAxis, FFluidSegmentStateOneD& NextSegmentState) const;
 	void ApplyBoundaryConditions(const FFluidSegmentStateOneD& CurrentSegmentState, FFluidSegmentStateOneD& NextSegmentState) const;
 	void UpdateDerivedCellValues(FFluidSegmentStateOneD& SegmentState) const;
 	float ComputeStableStepTime(const FFluidSegmentStateOneD& SegmentState) const;

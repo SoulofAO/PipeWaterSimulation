@@ -91,8 +91,12 @@ void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegm
 void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 {
 	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	for (FFluidSegmentStateOneD& SegmentState : SegmentStates)
+	const UWorld* World = GetWorld();
+	const float GravityAcceleration = World ? FMath::Abs(World->GetGravityZ()) : 980.0f;
+	const FVector GravityDirectionWorld = FVector::UpVector;
+	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
 	{
+		FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
 		if (SegmentState.CellStates.Num() < 2)
 		{
 			continue;
@@ -105,8 +109,20 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 			UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D CFL Limited: Requested={0}, Stable={1}"), { FString::SanitizeFloat(SimulationStepTime), FString::SanitizeFloat(StableStepTime) }), true, true, FLinearColor::Yellow, 0.0f);
 		}
 
+		float GravityAxisComponent = 0.0f;
+		if (SegmentPipeActors.IsValidIndex(SegmentIndex))
+		{
+			const APipeFluidPipeActor* PipeActor = SegmentPipeActors[SegmentIndex].Get();
+			if (PipeActor)
+			{
+				const FVector PipeAxisDirectionWorld = PipeActor->GetActorForwardVector().GetSafeNormal();
+				GravityAxisComponent = FVector::DotProduct(GravityDirectionWorld, PipeAxisDirectionWorld);
+			}
+		}
+
+		const float GravityAccelerationAlongAxis = GravityAcceleration * GravityAxisComponent;
 		FFluidSegmentStateOneD NextSegmentState = SegmentState;
-		SolveSegmentWaterHammerStep(SegmentState, EffectiveStepTime, NextSegmentState);
+		SolveSegmentWaterHammerStep(SegmentState, EffectiveStepTime, GravityAccelerationAlongAxis, NextSegmentState);
 		ApplyBoundaryConditions(SegmentState, NextSegmentState);
 		UpdateDerivedCellValues(NextSegmentState);
 		if (!IsSegmentStateFinite(NextSegmentState))
@@ -117,7 +133,7 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 	}
 }
 
-void UFluidSegment1DSubsystem::SolveSegmentWaterHammerStep(const FFluidSegmentStateOneD& CurrentSegmentState, float SimulationStepTime, FFluidSegmentStateOneD& NextSegmentState) const
+void UFluidSegment1DSubsystem::SolveSegmentWaterHammerStep(const FFluidSegmentStateOneD& CurrentSegmentState, float SimulationStepTime, float GravityAccelerationAlongAxis, FFluidSegmentStateOneD& NextSegmentState) const
 {
 	const float CrossSectionArea = GetCrossSectionArea(CurrentSegmentState);
 	const float SafeDensity = FMath::Max(CurrentSegmentState.Density, KINDA_SMALL_NUMBER);
@@ -125,6 +141,7 @@ void UFluidSegment1DSubsystem::SolveSegmentWaterHammerStep(const FFluidSegmentSt
 	const float SafeCellLength = FMath::Max(CurrentSegmentState.CellLength, 0.01f);
 	const float FrictionResistance = CurrentSegmentState.FrictionFactor / (2.0f * FMath::Max(CurrentSegmentState.PipeDiameter, 0.001f) * FMath::Max(CrossSectionArea, KINDA_SMALL_NUMBER));
 	const float PressureCoefficient = SafeDensity * SafeWaveSpeed * SafeWaveSpeed / FMath::Max(CrossSectionArea, KINDA_SMALL_NUMBER);
+	const float GravitySourceTerm = -CrossSectionArea * GravityAccelerationAlongAxis;
 
 	NextSegmentState.CellStates = CurrentSegmentState.CellStates;
 	for (int32 CellIndex = 1; CellIndex < CurrentSegmentState.CellStates.Num() - 1; ++CellIndex)
@@ -137,7 +154,7 @@ void UFluidSegment1DSubsystem::SolveSegmentWaterHammerStep(const FFluidSegmentSt
 		const float RightPressure = CurrentSegmentState.CellStates[CellIndex + 1].Pressure;
 		const float FlowGradient = (RightFlow - LeftFlow) / (2.0f * SafeCellLength);
 		const float PressureGradient = (RightPressure - LeftPressure) / (2.0f * SafeCellLength);
-		const float FlowDerivative = -(CrossSectionArea / SafeDensity) * PressureGradient - FrictionResistance * CenterFlow * FMath::Abs(CenterFlow);
+		const float FlowDerivative = -(CrossSectionArea / SafeDensity) * PressureGradient - FrictionResistance * CenterFlow * FMath::Abs(CenterFlow) + GravitySourceTerm;
 		const float PressureDerivative = -PressureCoefficient * FlowGradient;
 
 		NextSegmentState.CellStates[CellIndex].FlowRate = CenterFlow + FlowDerivative * SimulationStepTime;
@@ -190,13 +207,9 @@ void UFluidSegment1DSubsystem::ApplyBoundaryConditions(const FFluidSegmentStateO
 void UFluidSegment1DSubsystem::UpdateDerivedCellValues(FFluidSegmentStateOneD& SegmentState) const
 {
 	const float CrossSectionArea = GetCrossSectionArea(SegmentState);
-	const float SafeDensity = FMath::Max(SegmentState.Density, KINDA_SMALL_NUMBER);
-	const float ReferencePressure = SegmentState.CellStates.Num() > 0 ? SegmentState.CellStates[0].Pressure : 0.0f;
-	const float PressureScale = SafeDensity * FMath::Max(SegmentState.WaveSpeed * SegmentState.WaveSpeed, 1.0f);
 	for (FFluidSegmentCellStateOneD& CellState : SegmentState.CellStates)
 	{
 		CellState.Velocity = CellState.FlowRate / FMath::Max(CrossSectionArea, KINDA_SMALL_NUMBER);
-		CellState.FillRatio = FMath::Clamp(0.5f + (CellState.Pressure - ReferencePressure) / PressureScale, 0.0f, 1.0f);
 	}
 }
 
@@ -218,7 +231,7 @@ bool UFluidSegment1DSubsystem::IsSegmentStateFinite(const FFluidSegmentStateOneD
 {
 	for (const FFluidSegmentCellStateOneD& CellState : SegmentState.CellStates)
 	{
-		if (!FMath::IsFinite(CellState.Pressure) || !FMath::IsFinite(CellState.FlowRate) || !FMath::IsFinite(CellState.Velocity) || !FMath::IsFinite(CellState.FillRatio))
+		if (!FMath::IsFinite(CellState.Pressure) || !FMath::IsFinite(CellState.FlowRate) || !FMath::IsFinite(CellState.Velocity))
 		{
 			return false;
 		}
@@ -376,13 +389,12 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 			{
 				const FFluidSegmentCellStateOneD& CellState = SegmentState.CellStates[CellIndex];
 				const FString CellLabel = FString::Format(
-					TEXT("Cell {0} | P={1} Q={2} U={3} fill={4}"),
+					TEXT("Cell {0} | P={1} Q={2} U={3}"),
 					{
 						FString::FromInt(CellIndex),
 						FString::SanitizeFloat(CellState.Pressure),
 						FString::SanitizeFloat(CellState.FlowRate),
-						FString::SanitizeFloat(CellState.Velocity),
-						FString::SanitizeFloat(CellState.FillRatio)
+						FString::SanitizeFloat(CellState.Velocity)
 					});
 				const float StaggerScale = 14.0f;
 				const FVector StaggerWorld = LateralWorld * StaggerScale * static_cast<float>((CellIndex % 5) - 2);
