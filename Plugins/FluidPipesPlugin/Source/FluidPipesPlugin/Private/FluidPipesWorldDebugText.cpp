@@ -20,20 +20,7 @@ struct FFluidPipesQueuedWorldStringRow
 static TMap<TWeakObjectPtr<UWorld>, TArray<FFluidPipesQueuedWorldStringRow>> GFluidPipesWorldDebugTextRows;
 static TMap<const void*, uint64> GFluidPipesWorldDebugLastDrawFrameByCanvas;
 static FDelegateHandle GFluidPipesWorldDebugTextDrawServiceHandle;
-static FDelegateHandle GFluidPipesWorldDebugTextTickStartHandle;
 static FDelegateHandle GFluidPipesWorldDebugTextWorldCleanupHandle;
-
-static void FluidPipesWorldDebugTextOnWorldTickStart(UWorld* World, ELevelTick TickType, float)
-{
-	if (!World || TickType != LEVELTICK_All)
-	{
-		return;
-	}
-	if (TArray<FFluidPipesQueuedWorldStringRow>* FoundRows = GFluidPipesWorldDebugTextRows.Find(TWeakObjectPtr<UWorld>(World)))
-	{
-		FoundRows->Reset();
-	}
-}
 
 static void FluidPipesWorldDebugTextOnWorldCleanup(UWorld* World, bool, bool)
 {
@@ -128,7 +115,6 @@ void FluidPipesWorldDebugTextStartup()
 	{
 		return;
 	}
-	GFluidPipesWorldDebugTextTickStartHandle = FWorldDelegates::OnWorldTickStart.AddStatic(FluidPipesWorldDebugTextOnWorldTickStart);
 	GFluidPipesWorldDebugTextWorldCleanupHandle = FWorldDelegates::OnWorldCleanup.AddStatic(FluidPipesWorldDebugTextOnWorldCleanup);
 	GFluidPipesWorldDebugTextDrawServiceHandle = UDebugDrawService::Register(TEXT("Tonemapper"), FDebugDrawDelegate::CreateStatic(FluidPipesWorldDebugTextDrawServiceCallback));
 }
@@ -140,11 +126,6 @@ void FluidPipesWorldDebugTextShutdown()
 		UDebugDrawService::Unregister(GFluidPipesWorldDebugTextDrawServiceHandle);
 		GFluidPipesWorldDebugTextDrawServiceHandle = FDelegateHandle();
 	}
-	if (GFluidPipesWorldDebugTextTickStartHandle.IsValid())
-	{
-		FWorldDelegates::OnWorldTickStart.Remove(GFluidPipesWorldDebugTextTickStartHandle);
-		GFluidPipesWorldDebugTextTickStartHandle = FDelegateHandle();
-	}
 	if (GFluidPipesWorldDebugTextWorldCleanupHandle.IsValid())
 	{
 		FWorldDelegates::OnWorldCleanup.Remove(GFluidPipesWorldDebugTextWorldCleanupHandle);
@@ -152,6 +133,18 @@ void FluidPipesWorldDebugTextShutdown()
 	}
 	GFluidPipesWorldDebugTextRows.Empty();
 	GFluidPipesWorldDebugLastDrawFrameByCanvas.Empty();
+}
+
+void FluidPipesWorldDebugTextClearWorld(UWorld* World)
+{
+	if (!World)
+	{
+		return;
+	}
+	if (TArray<FFluidPipesQueuedWorldStringRow>* FoundRows = GFluidPipesWorldDebugTextRows.Find(TWeakObjectPtr<UWorld>(World)))
+	{
+		FoundRows->Reset();
+	}
 }
 
 void FluidPipesWorldDebugTextQueueString(UWorld* World, FVector WorldLocation, const FString& DisplayText, FColor TextColor, float FontScale)

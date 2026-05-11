@@ -247,12 +247,14 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 	{
 		return;
 	}
+	FlushPersistentDebugLines(World);
 
 	const ULazyFluidPipesDeveloperSettings* WorldDebugSettings = GetDefault<ULazyFluidPipesDeveloperSettings>();
 	const bool DrawOneDWireGeometry = WorldDebugSettings->WorldDebugIncludeOneDWireGeometry;
 	const bool DrawSegmentAndEndpointText = DebugLevel >= 1;
 	const bool DrawPerCellText = DebugLevel >= 2;
 	const bool DrawEveryCellText = DebugLevel >= 3;
+	FluidPipesWorldDebugTextClearWorld(World);
 
 	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
 	{
@@ -293,7 +295,7 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 
 		if (DrawOneDWireGeometry)
 		{
-			DrawDebugLine(World, AxisStartWorld, AxisEndWorld, FColor::White, false, 0.0f, 0, 1.5f);
+			DrawDebugLine(World, AxisStartWorld, AxisEndWorld, FColor::White, true, -1.0f, 0, 1.5f);
 		}
 
 		const float StableStepTime = ComputeStableStepTime(SegmentState);
@@ -357,7 +359,7 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 
 			if (DrawOneDWireGeometry)
 			{
-				DrawDebugSphere(World, CellPositionWorld, 8.0f, 8, PressureColor, false, 0.0f, 0, 1.0f);
+				DrawDebugSphere(World, CellPositionWorld, 8.0f, 8, PressureColor, true, -1.0f, 0, 1.0f);
 			}
 
 			const float FlowRate = SegmentState.CellStates[CellIndex].FlowRate;
@@ -367,7 +369,7 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 				const float ArrowHalfLength = FMath::Clamp(FMath::Abs(FlowRate) * 0.001f, 5.0f, 80.0f);
 				const FVector ArrowStartWorld = CellPositionWorld - FlowDirectionWorld * ArrowHalfLength * 0.5f;
 				const FVector ArrowEndWorld = CellPositionWorld + FlowDirectionWorld * ArrowHalfLength * 0.5f;
-				DrawDebugDirectionalArrow(World, ArrowStartWorld, ArrowEndWorld, ArrowHalfLength * 0.35f, FColor(0, 255, 255), false, 0.0f, 0, 2.0f);
+				DrawDebugDirectionalArrow(World, ArrowStartWorld, ArrowEndWorld, ArrowHalfLength * 0.35f, FColor(0, 255, 255), true, -1.0f, 0, 2.0f);
 			}
 
 			if (WorldDebugSettings->WorldDebugIncludeOneDPerCellCaptions && DrawPerCellText && (CellIndex % LabelStride == 0))
