@@ -1,7 +1,10 @@
 #include "Core/Simulation1D/FluidSegment1DSubsystem.h"
 
+#include "Core/Actors/PipeFluidBasePointActor.h"
 #include "Core/Actors/PipeFluidPipeActor.h"
+#include "Core/Simulation0D/FluidNetwork0DSubsystem.h"
 #include "DrawDebugHelpers.h"
+#include "EngineUtils.h"
 #include "FluidPipesDrawDebug.h"
 #include "FluidPipesWorldDebugText.h"
 #include "Kismet/KismetSystemLibrary.h"
@@ -54,6 +57,8 @@ void UFluidSegment1DSubsystem::ResetSimulationState()
 {
 	SegmentStates.Reset();
 	SegmentPipeActors.Reset();
+	JunctionSceneNodeKeyToIncidentEndpoints.Reset();
+	SceneNodeKeyToZeroDNodeIndex.Reset();
 	AccumulatedTime = 0.0f;
 }
 
@@ -85,20 +90,222 @@ void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegm
 	{
 		UpdateDerivedCellValues(SegmentState);
 	}
+	RebuildJunctionSceneNodeKeyTopology();
+	RebuildSceneNodeKeyToZeroDNodeIndexMap();
 	AccumulatedTime = 0.0f;
+}
+
+void UFluidSegment1DSubsystem::RebuildSceneNodeKeyToZeroDNodeIndexMap()
+{
+	SceneNodeKeyToZeroDNodeIndex.Reset();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	TArray<APipeFluidBasePointActor*> PointActors;
+	for (TActorIterator<APipeFluidBasePointActor> Iterator(World); Iterator; ++Iterator)
+	{
+		if (*Iterator)
+		{
+			PointActors.Add(*Iterator);
+		}
+	}
+
+	PointActors.Sort([](const APipeFluidBasePointActor& Left, const APipeFluidBasePointActor& Right)
+		{
+			return Left.SceneNodeKey < Right.SceneNodeKey;
+		});
+
+	TSet<int32> SeenSceneNodeKeys;
+	for (APipeFluidBasePointActor* PointActor : PointActors)
+	{
+		if (!PointActor)
+		{
+			continue;
+		}
+
+		const int32 SceneNodeKeyValue = PointActor->SceneNodeKey;
+		if (SeenSceneNodeKeys.Contains(SceneNodeKeyValue))
+		{
+			continue;
+		}
+
+		SeenSceneNodeKeys.Add(SceneNodeKeyValue);
+		SceneNodeKeyToZeroDNodeIndex.Add(SceneNodeKeyValue, SceneNodeKeyToZeroDNodeIndex.Num());
+	}
+}
+
+void UFluidSegment1DSubsystem::RebuildJunctionSceneNodeKeyTopology()
+{
+	JunctionSceneNodeKeyToIncidentEndpoints.Reset();
+	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	{
+		const FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+		if (SegmentState.CellStates.Num() < 2)
+		{
+			continue;
+		}
+		if (SegmentState.LeftSceneNodeKey != INDEX_NONE)
+		{
+			JunctionSceneNodeKeyToIncidentEndpoints.FindOrAdd(SegmentState.LeftSceneNodeKey).Add(FFluidOneDJunctionEndpointIncident{SegmentIndex, true});
+		}
+		if (SegmentState.RightSceneNodeKey != INDEX_NONE)
+		{
+			JunctionSceneNodeKeyToIncidentEndpoints.FindOrAdd(SegmentState.RightSceneNodeKey).Add(FFluidOneDJunctionEndpointIncident{SegmentIndex, false});
+		}
+	}
+}
+
+void UFluidSegment1DSubsystem::ApplyJunctionCouplingToNextSegmentStates(const TArray<FFluidSegmentStateOneD>& CurrentSegmentStates, TArray<FFluidSegmentStateOneD>& NextSegmentStates) const
+{
+	for (const auto& JunctionEntry : JunctionSceneNodeKeyToIncidentEndpoints)
+	{
+		const TArray<FFluidOneDJunctionEndpointIncident>& IncidentEndpoints = JunctionEntry.Value;
+		if (IncidentEndpoints.Num() < 2)
+		{
+			continue;
+		}
+
+		float WeightedPressureTimesImpedanceSum = 0.0f;
+		float AcousticImpedanceSum = 0.0f;
+		float SimplePressureSum = 0.0f;
+		int32 SimplePressureContributorCount = 0;
+		for (const FFluidOneDJunctionEndpointIncident& IncidentEndpoint : IncidentEndpoints)
+		{
+			if (!NextSegmentStates.IsValidIndex(IncidentEndpoint.SegmentIndex))
+			{
+				continue;
+			}
+			const FFluidSegmentStateOneD& NextSegmentState = NextSegmentStates[IncidentEndpoint.SegmentIndex];
+			if (NextSegmentState.CellStates.Num() < 2)
+			{
+				continue;
+			}
+			const int32 InteriorNeighborCellIndex = IncidentEndpoint.bLeftEndpoint ? 1 : NextSegmentState.CellStates.Num() - 2;
+			const float InteriorNeighborPressure = NextSegmentState.CellStates[InteriorNeighborCellIndex].Pressure;
+			SimplePressureSum += InteriorNeighborPressure;
+			SimplePressureContributorCount += 1;
+
+			const float CrossSectionArea = GetCrossSectionArea(NextSegmentState);
+			const float SafeDensity = FMath::Max(NextSegmentState.Density, KINDA_SMALL_NUMBER);
+			const float SafeWaveSpeed = FMath::Max(NextSegmentState.WaveSpeed, 1.0f);
+			const float AcousticImpedance = SafeDensity * SafeWaveSpeed / FMath::Max(CrossSectionArea, KINDA_SMALL_NUMBER);
+			WeightedPressureTimesImpedanceSum += InteriorNeighborPressure * AcousticImpedance;
+			AcousticImpedanceSum += AcousticImpedance;
+		}
+		if (SimplePressureContributorCount <= 0)
+		{
+			continue;
+		}
+		const float JunctionPressure = AcousticImpedanceSum > KINDA_SMALL_NUMBER
+			? WeightedPressureTimesImpedanceSum / AcousticImpedanceSum
+			: SimplePressureSum / static_cast<float>(SimplePressureContributorCount);
+
+		for (const FFluidOneDJunctionEndpointIncident& IncidentEndpoint : IncidentEndpoints)
+		{
+			if (!CurrentSegmentStates.IsValidIndex(IncidentEndpoint.SegmentIndex) || !NextSegmentStates.IsValidIndex(IncidentEndpoint.SegmentIndex))
+			{
+				continue;
+			}
+			const FFluidSegmentStateOneD& CurrentSegmentState = CurrentSegmentStates[IncidentEndpoint.SegmentIndex];
+			const EFluidBoundaryConditionTypeOneD BoundaryConditionType = IncidentEndpoint.bLeftEndpoint ? CurrentSegmentState.LeftBoundaryConditionType : CurrentSegmentState.RightBoundaryConditionType;
+			if (BoundaryConditionType != EFluidBoundaryConditionTypeOneD::Reflective)
+			{
+				continue;
+			}
+
+			FFluidSegmentStateOneD& NextSegmentState = NextSegmentStates[IncidentEndpoint.SegmentIndex];
+			if (NextSegmentState.CellStates.Num() < 2)
+			{
+				continue;
+			}
+			const int32 BoundaryCellIndex = IncidentEndpoint.bLeftEndpoint ? 0 : NextSegmentState.CellStates.Num() - 1;
+			const int32 InteriorNeighborCellIndex = IncidentEndpoint.bLeftEndpoint ? 1 : NextSegmentState.CellStates.Num() - 2;
+			NextSegmentState.CellStates[BoundaryCellIndex].Pressure = JunctionPressure;
+			NextSegmentState.CellStates[BoundaryCellIndex].FlowRate = NextSegmentState.CellStates[InteriorNeighborCellIndex].FlowRate;
+		}
+	}
+}
+
+void UFluidSegment1DSubsystem::ApplySceneNodeZeroDPressuresToNextSegmentStates(const TArray<FFluidSegmentStateOneD>& CurrentSegmentStates, TArray<FFluidSegmentStateOneD>& NextSegmentStates)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const UFluidNetwork0DSubsystem* ZeroDSubsystem = World->GetSubsystem<UFluidNetwork0DSubsystem>();
+	if (!ZeroDSubsystem)
+	{
+		return;
+	}
+
+	const TArray<FFluidNetworkNodeStateZeroD>& NetworkNodeStates = ZeroDSubsystem->GetNodeStates();
+	if (NetworkNodeStates.Num() == 0)
+	{
+		return;
+	}
+
+	RebuildSceneNodeKeyToZeroDNodeIndexMap();
+	if (SceneNodeKeyToZeroDNodeIndex.Num() == 0)
+	{
+		return;
+	}
+
+	for (int32 SegmentIndex = 0; SegmentIndex < NextSegmentStates.Num(); ++SegmentIndex)
+	{
+		if (!CurrentSegmentStates.IsValidIndex(SegmentIndex))
+		{
+			continue;
+		}
+
+		const FFluidSegmentStateOneD& CurrentSegmentState = CurrentSegmentStates[SegmentIndex];
+		FFluidSegmentStateOneD& NextSegmentState = NextSegmentStates[SegmentIndex];
+		if (NextSegmentState.CellStates.Num() < 2)
+		{
+			continue;
+		}
+
+		if (CurrentSegmentState.LeftBoundaryConditionType == EFluidBoundaryConditionTypeOneD::Reflective && CurrentSegmentState.LeftSceneNodeKey != INDEX_NONE)
+		{
+			const int32* NodeIndex = SceneNodeKeyToZeroDNodeIndex.Find(CurrentSegmentState.LeftSceneNodeKey);
+			if (NodeIndex != nullptr && NetworkNodeStates.IsValidIndex(*NodeIndex))
+			{
+				NextSegmentState.CellStates[0].Pressure = NetworkNodeStates[*NodeIndex].Pressure;
+			}
+		}
+
+		if (CurrentSegmentState.RightBoundaryConditionType == EFluidBoundaryConditionTypeOneD::Reflective && CurrentSegmentState.RightSceneNodeKey != INDEX_NONE)
+		{
+			const int32* NodeIndex = SceneNodeKeyToZeroDNodeIndex.Find(CurrentSegmentState.RightSceneNodeKey);
+			if (NodeIndex != nullptr && NetworkNodeStates.IsValidIndex(*NodeIndex))
+			{
+				const int32 LastCellIndex = NextSegmentState.CellStates.Num() - 1;
+				NextSegmentState.CellStates[LastCellIndex].Pressure = NetworkNodeStates[*NodeIndex].Pressure;
+			}
+		}
+	}
 }
 
 void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 {
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
 	const UWorld* World = GetWorld();
 	const float GravityAcceleration = World ? FMath::Abs(World->GetGravityZ()) : 980.0f;
 	const FVector GravityDirectionWorld = FVector::UpVector;
+
+	RebuildJunctionSceneNodeKeyTopology();
+
+	TArray<FFluidSegmentStateOneD> NextSegmentStates;
+	NextSegmentStates.SetNum(SegmentStates.Num());
 	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
 	{
 		FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
 		if (SegmentState.CellStates.Num() < 2)
 		{
+			NextSegmentStates[SegmentIndex] = SegmentState;
 			continue;
 		}
 
@@ -124,6 +331,16 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 		FFluidSegmentStateOneD NextSegmentState = SegmentState;
 		SolveSegmentWaterHammerStep(SegmentState, EffectiveStepTime, GravityAccelerationAlongAxis, NextSegmentState);
 		ApplyBoundaryConditions(SegmentState, NextSegmentState);
+		NextSegmentStates[SegmentIndex] = MoveTemp(NextSegmentState);
+	}
+
+	ApplyJunctionCouplingToNextSegmentStates(SegmentStates, NextSegmentStates);
+	ApplySceneNodeZeroDPressuresToNextSegmentStates(SegmentStates, NextSegmentStates);
+
+	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	{
+		FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+		FFluidSegmentStateOneD& NextSegmentState = NextSegmentStates[SegmentIndex];
 		UpdateDerivedCellValues(NextSegmentState);
 		if (!IsSegmentStateFinite(NextSegmentState))
 		{

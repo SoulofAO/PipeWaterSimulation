@@ -6,6 +6,7 @@
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "FluidPipesDrawDebug.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 #include "SceneView.h"
 
@@ -31,6 +32,25 @@ static void FluidPipesWorldDebugTextOnWorldCleanup(UWorld* World, bool, bool)
 	GFluidPipesWorldDebugTextRows.Remove(TWeakObjectPtr<UWorld>(World));
 }
 
+static void FluidPipesDrawFluidDebugScreenLegend(UCanvas* Canvas, UFont* RenderFont, const FFontRenderInfo& FontRenderInfo, const FIntRect& ViewRect)
+{
+	TArray<FString> LegendLines;
+	LegendLines.Reserve(2);
+	LegendLines.Add(TEXT("1D cells: P = pressure; Q = volume flow rate; U = flow velocity (Q / pipe cross-section area)"));
+	LegendLines.Add(TEXT("0D nodes: P = node pressure; V = stored volume; SrcQ = external volume flow (source positive, sink negative)"));
+
+	const float LegendOriginX = static_cast<float>(ViewRect.Min.X) + 10.0f;
+	float LegendOriginY = static_cast<float>(ViewRect.Min.Y) + 10.0f;
+	const float LegendFontScale = 1.0f;
+	const float LegendLineStepWorldUnits = 14.0f * LegendFontScale;
+	Canvas->SetDrawColor(FColor(230, 245, 255));
+	for (const FString& LegendLine : LegendLines)
+	{
+		Canvas->DrawText(RenderFont, LegendLine, LegendOriginX, LegendOriginY, LegendFontScale, LegendFontScale, FontRenderInfo);
+		LegendOriginY += LegendLineStepWorldUnits;
+	}
+}
+
 static void FluidPipesWorldDebugTextDrawServiceCallback(UCanvas* Canvas, APlayerController*)
 {
 	if (!Canvas || !Canvas->Canvas || !Canvas->SceneView)
@@ -42,8 +62,10 @@ static void FluidPipesWorldDebugTextDrawServiceCallback(UCanvas* Canvas, APlayer
 	{
 		return;
 	}
+	const bool bDrawFluidDebugLegend = FluidPipesShouldDrawDebug();
 	TArray<FFluidPipesQueuedWorldStringRow>* FoundRows = GFluidPipesWorldDebugTextRows.Find(TWeakObjectPtr<UWorld>(CanvasWorld));
-	if (!FoundRows || FoundRows->Num() == 0)
+	const bool bHasQueuedWorldRows = FoundRows && FoundRows->Num() > 0;
+	if (!bDrawFluidDebugLegend && !bHasQueuedWorldRows)
 	{
 		return;
 	}
@@ -65,9 +87,22 @@ static void FluidPipesWorldDebugTextDrawServiceCallback(UCanvas* Canvas, APlayer
 	{
 		return;
 	}
-	const FFontRenderInfo FontRenderInfo = Canvas->CreateFontRenderInfo(true, false);
+	const FFontRenderInfo FontRenderInfo = Canvas->CreateFontRenderInfo(true, true);
+	const FFontRenderInfo WorldRowFontRenderInfo = Canvas->CreateFontRenderInfo(true, false);
 	const FColor PreviousDrawColor = Canvas->DrawColor;
 	const FVector ViewOriginWorld = SceneView->ViewLocation;
+	const FIntRect UnscaledViewRect = SceneView->UnscaledViewRect;
+
+	if (bDrawFluidDebugLegend)
+	{
+		FluidPipesDrawFluidDebugScreenLegend(Canvas, RenderFont, FontRenderInfo, UnscaledViewRect);
+	}
+
+	if (!bHasQueuedWorldRows)
+	{
+		Canvas->SetDrawColor(PreviousDrawColor);
+		return;
+	}
 
 	for (const FFluidPipesQueuedWorldStringRow& Row : *FoundRows)
 	{
@@ -104,7 +139,7 @@ static void FluidPipesWorldDebugTextDrawServiceCallback(UCanvas* Canvas, APlayer
 		}
 
 		Canvas->SetDrawColor(Row.TextColor);
-		Canvas->DrawText(RenderFont, Row.DisplayText, ScreenLocation.X, ScreenLocation.Y, EffectiveFontScale, EffectiveFontScale, FontRenderInfo);
+		Canvas->DrawText(RenderFont, Row.DisplayText, ScreenLocation.X, ScreenLocation.Y, EffectiveFontScale, EffectiveFontScale, WorldRowFontRenderInfo);
 	}
 	Canvas->SetDrawColor(PreviousDrawColor);
 }

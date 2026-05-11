@@ -11,8 +11,12 @@ class FLUIDPIPESPLUGIN_API APipeFluidBasePointActor : public APipeActor
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidPipeScene")
-	int32 SceneNodeKey = 0;
+	virtual void PostActorCreated() override;
+
+	virtual void PostDuplicate(EDuplicateMode::Type DuplicateMode) override;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FluidPipeScene")
+	int32 SceneNodeKey = INDEX_NONE;
 
 	virtual FFluidNetworkNodeStateZeroD ImportFluidNetworkNodeStateZeroD() const;
 

@@ -139,7 +139,6 @@ static void ImportFluidActorsIntoOneDSubsystem(UWorld* World)
 			CellState.Pressure = PipeActor->InitialCellPressure;
 			CellState.FlowRate = PipeActor->InitialCellFlowRate;
 			CellState.Velocity = 0.0f;
-			CellState.FillRatio = 0.5f;
 		}
 
 		BuiltSegments.Add(BuiltSegment);
