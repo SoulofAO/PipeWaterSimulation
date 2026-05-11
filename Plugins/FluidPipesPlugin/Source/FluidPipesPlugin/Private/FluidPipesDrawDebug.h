@@ -11,7 +11,7 @@ FORCEINLINE bool FluidPipesShouldDrawDebug()
 
 FORCEINLINE int32 FluidPipesGetOneDWorldDebugDetailLevel()
 {
-	return FluidPipesShouldDrawDebug() ? 2 : 0;
+	return FluidPipesShouldDrawDebug() ? FluidPipesGetDrawDebugLevel() : 0;
 }
 
 FORCEINLINE bool FluidPipesShouldDrawZeroDWorldOverlay()

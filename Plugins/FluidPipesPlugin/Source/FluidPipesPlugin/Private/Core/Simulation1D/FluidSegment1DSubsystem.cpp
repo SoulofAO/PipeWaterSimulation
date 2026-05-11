@@ -226,6 +226,19 @@ bool UFluidSegment1DSubsystem::IsSegmentStateFinite(const FFluidSegmentStateOneD
 	return true;
 }
 
+static FString FluidOneDBoundaryStateDisplayString(EFluidBoundaryConditionTypeOneD BoundaryType, float BoundaryPressure, float BoundaryFlow)
+{
+	switch (BoundaryType)
+	{
+	case EFluidBoundaryConditionTypeOneD::FixedPressure:
+		return FString::Format(TEXT("FixedPressure p={0}"), { FString::SanitizeFloat(BoundaryPressure) });
+	case EFluidBoundaryConditionTypeOneD::FixedFlow:
+		return FString::Format(TEXT("FixedFlow Q={0}"), { FString::SanitizeFloat(BoundaryFlow) });
+	default:
+		return FString(TEXT("Reflective"));
+	}
+}
+
 void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 {
 	UWorld* World = GetWorld();
@@ -234,7 +247,9 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 		return;
 	}
 
-	const bool DrawCellLabels = DebugLevel >= 2;
+	const bool DrawSegmentAndEndpointText = DebugLevel >= 1;
+	const bool DrawPerCellText = DebugLevel >= 2;
+	const bool DrawEveryCellText = DebugLevel >= 3;
 
 	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
 	{
@@ -266,9 +281,60 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 		}
 		const float PressureRange = FMath::Max(MaxPressure - MinPressure, KINDA_SMALL_NUMBER);
 
+		FVector LateralWorld = FVector::CrossProduct(AxisDirectionWorld, FVector::UpVector);
+		if (LateralWorld.SizeSquared() < 1.0e-8f)
+		{
+			LateralWorld = FVector::CrossProduct(AxisDirectionWorld, FVector::ForwardVector);
+		}
+		LateralWorld = LateralWorld.GetSafeNormal();
+
 		DrawDebugLine(World, AxisStartWorld, AxisEndWorld, FColor::White, false, 0.0f, 0, 1.5f);
 
-		const int32 LabelStride = CellCount <= 8 ? 1 : FMath::Max(1, CellCount / 6);
+		const float StableStepTime = ComputeStableStepTime(SegmentState);
+		const float CrossSectionArea = GetCrossSectionArea(SegmentState);
+
+		if (DrawSegmentAndEndpointText)
+		{
+			const FString SegmentSummaryLine = FString::Format(
+				TEXT("{0} | cells={1} L={2} dx={3} | c={4} D={5} rho={6} f={7} | A={8} dtStable={9} | Pmin={10} Pmax={11}"),
+				{
+					SegmentState.SegmentName.ToString(),
+					FString::FromInt(CellCount),
+					FString::SanitizeFloat(SegmentState.SegmentLength),
+					FString::SanitizeFloat(SegmentState.CellLength),
+					FString::SanitizeFloat(SegmentState.WaveSpeed),
+					FString::SanitizeFloat(SegmentState.PipeDiameter),
+					FString::SanitizeFloat(SegmentState.Density),
+					FString::SanitizeFloat(SegmentState.FrictionFactor),
+					FString::SanitizeFloat(CrossSectionArea),
+					FString::SanitizeFloat(StableStepTime),
+					FString::SanitizeFloat(MinPressure),
+					FString::SanitizeFloat(MaxPressure)
+				});
+			DrawDebugString(World, CenterWorld + FVector(0.0f, 0.0f, 48.0f), SegmentSummaryLine, nullptr, FColor::Yellow, 0.0f, true, 1.0f);
+
+			const FString LeftEndpointLine = FString::Format(
+				TEXT("Start | nodeKey={0} | {1} | cell0 P={2} Q={3}"),
+				{
+					FString::FromInt(SegmentState.LeftSceneNodeKey),
+					FluidOneDBoundaryStateDisplayString(SegmentState.LeftBoundaryConditionType, SegmentState.LeftBoundaryPressure, SegmentState.LeftBoundaryFlow),
+					FString::SanitizeFloat(SegmentState.CellStates[0].Pressure),
+					FString::SanitizeFloat(SegmentState.CellStates[0].FlowRate)
+				});
+			DrawDebugString(World, AxisStartWorld + FVector(0.0f, 0.0f, 28.0f) + LateralWorld * 18.0f, LeftEndpointLine, nullptr, FColor::Cyan, 0.0f, true, 1.0f);
+
+			const FString RightEndpointLine = FString::Format(
+				TEXT("End | nodeKey={0} | {1} | cellLast P={2} Q={3}"),
+				{
+					FString::FromInt(SegmentState.RightSceneNodeKey),
+					FluidOneDBoundaryStateDisplayString(SegmentState.RightBoundaryConditionType, SegmentState.RightBoundaryPressure, SegmentState.RightBoundaryFlow),
+					FString::SanitizeFloat(SegmentState.CellStates[CellCount - 1].Pressure),
+					FString::SanitizeFloat(SegmentState.CellStates[CellCount - 1].FlowRate)
+				});
+			DrawDebugString(World, AxisEndWorld + FVector(0.0f, 0.0f, 28.0f) - LateralWorld * 18.0f, RightEndpointLine, nullptr, FColor::Cyan, 0.0f, true, 1.0f);
+		}
+
+		const int32 LabelStride = DrawEveryCellText ? 1 : (CellCount <= 10 ? 1 : FMath::Max(1, CellCount / 8));
 
 		for (int32 CellIndex = 0; CellIndex < CellCount; ++CellIndex)
 		{
@@ -289,30 +355,22 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 				DrawDebugDirectionalArrow(World, ArrowStartWorld, ArrowEndWorld, ArrowHalfLength * 0.35f, FColor(0, 255, 255), false, 0.0f, 0, 2.0f);
 			}
 
-			if (DrawCellLabels && (CellIndex % LabelStride == 0))
+			if (DrawPerCellText && (CellIndex % LabelStride == 0))
 			{
+				const FFluidSegmentCellStateOneD& CellState = SegmentState.CellStates[CellIndex];
 				const FString CellLabel = FString::Format(
-					TEXT("Cell {0} P={1} Q={2}"),
+					TEXT("Cell {0} | P={1} Q={2} U={3} fill={4}"),
 					{
 						FString::FromInt(CellIndex),
-						FString::SanitizeFloat(SegmentState.CellStates[CellIndex].Pressure),
-						FString::SanitizeFloat(FlowRate)
+						FString::SanitizeFloat(CellState.Pressure),
+						FString::SanitizeFloat(CellState.FlowRate),
+						FString::SanitizeFloat(CellState.Velocity),
+						FString::SanitizeFloat(CellState.FillRatio)
 					});
-				DrawDebugString(World, CellPositionWorld + FVector(0.0f, 0.0f, 15.0f), CellLabel, nullptr, FColor::White, 0.0f, true, 1.15f);
+				const float StaggerScale = 14.0f;
+				const FVector StaggerWorld = LateralWorld * StaggerScale * static_cast<float>((CellIndex % 5) - 2);
+				DrawDebugString(World, CellPositionWorld + FVector(0.0f, 0.0f, 18.0f) + StaggerWorld, CellLabel, nullptr, FColor::White, 0.0f, true, 1.0f);
 			}
-		}
-
-		if (DrawCellLabels)
-		{
-			const FString SegmentLabel = FString::Format(
-				TEXT("{0} cells={1} Pmin={2} Pmax={3}"),
-				{
-					SegmentState.SegmentName.ToString(),
-					FString::FromInt(CellCount),
-					FString::SanitizeFloat(MinPressure),
-					FString::SanitizeFloat(MaxPressure)
-				});
-			DrawDebugString(World, CenterWorld + FVector(0.0f, 0.0f, 40.0f), SegmentLabel, nullptr, FColor::Yellow, 0.0f, true, 1.35f);
 		}
 	}
 }

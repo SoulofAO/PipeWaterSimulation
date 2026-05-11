@@ -12,6 +12,9 @@ class FLUIDPIPESPLUGIN_API APipeFluidSourceActor : public APipeFluidBasePointAct
 public:
 	APipeFluidSourceActor();
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidPipeSceneSource")
+	float SourceVolumeFlowRate = 0.0f;
+
 	virtual FFluidNetworkNodeStateZeroD ImportFluidNetworkNodeStateZeroD() const override;
 
 	virtual FFluidSegmentStateOneD ImportFluidSegmentStateOneDEndpoint(FFluidSegmentStateOneD Segment, bool bLeftEndpoint) const override;

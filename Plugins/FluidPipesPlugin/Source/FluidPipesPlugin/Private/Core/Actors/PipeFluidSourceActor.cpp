@@ -12,20 +12,27 @@ FFluidNetworkNodeStateZeroD APipeFluidSourceActor::ImportFluidNetworkNodeStateZe
 {
 	FFluidNetworkNodeStateZeroD FluidImportedNetworkNodeStateZeroD;
 	FluidImportedNetworkNodeStateZeroD.NodeName = FName(*FString::Format(TEXT("{0}"), { FString::FromInt(SceneNodeKey) }));
+	FluidImportedNetworkNodeStateZeroD.SourceFlow = FMath::Max(0.0f, SourceVolumeFlowRate);
 	return FluidImportedNetworkNodeStateZeroD;
 }
 
 FFluidSegmentStateOneD APipeFluidSourceActor::ImportFluidSegmentStateOneDEndpoint(FFluidSegmentStateOneD Segment, bool bLeftEndpoint) const
 {
+	const float SupplyMagnitude = FMath::Max(0.0f, SourceVolumeFlowRate);
+	if (SupplyMagnitude <= KINDA_SMALL_NUMBER)
+	{
+		return Segment;
+	}
+
 	if (bLeftEndpoint)
 	{
-		Segment.LeftBoundaryConditionType = EFluidBoundaryConditionTypeOneD::FixedPressure;
-		Segment.LeftBoundaryPressure = 0.0f;
+		Segment.LeftBoundaryConditionType = EFluidBoundaryConditionTypeOneD::FixedFlow;
+		Segment.LeftBoundaryFlow = SupplyMagnitude;
 	}
 	else
 	{
-		Segment.RightBoundaryConditionType = EFluidBoundaryConditionTypeOneD::FixedPressure;
-		Segment.RightBoundaryPressure = 0.0f;
+		Segment.RightBoundaryConditionType = EFluidBoundaryConditionTypeOneD::FixedFlow;
+		Segment.RightBoundaryFlow = -SupplyMagnitude;
 	}
 	return Segment;
 }
