@@ -26,6 +26,10 @@ APipeActor::APipeActor()
 void APipeActor::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
+	if (FluidDynamicMeshComponent)
+	{
+		FluidDynamicMeshComponent->SetMaterial(0, FluidVisualMaterial);
+	}
 	RebuildFluidDynamicMesh();
 }
 

@@ -22,7 +22,8 @@ void UFluidNetwork0DSubsystem::Deinitialize()
 void UFluidNetwork0DSubsystem::Tick(float DeltaTime)
 {
 	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	if (Settings->EnableFluidNetworkSimulationZeroD)
+	const bool bEnableFluidNetworkSimulationZeroD = Settings->EnableFluidNetworkSimulationZeroD;
+	if (bEnableFluidNetworkSimulationZeroD)
 	{
 		AccumulatedTime += DeltaTime;
 		while (AccumulatedTime >= Settings->SimulationStepTimeZeroD)
@@ -30,16 +31,16 @@ void UFluidNetwork0DSubsystem::Tick(float DeltaTime)
 			SimulateStep(Settings->SimulationStepTimeZeroD);
 			AccumulatedTime -= Settings->SimulationStepTimeZeroD;
 		}
-	}
 
-	if (FluidPipesShouldEmitScreenDebugMessages())
-	{
-		UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("0D Tick: Nodes={0}, Edges={1}"), { FString::FromInt(NetworkNodeStates.Num()), FString::FromInt(NetworkEdgeStates.Num()) }), true, false, FLinearColor::Green, 0.0f);
-	}
+		if (FluidPipesShouldEmitScreenDebugMessages())
+		{
+			UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("0D Tick: Nodes={0}, Edges={1}"), { FString::FromInt(NetworkNodeStates.Num()), FString::FromInt(NetworkEdgeStates.Num()) }), true, false, FLinearColor::Green, 0.0f);
+		}
 
-	if (FluidPipesShouldDrawZeroDWorldOverlay())
-	{
-		DrawDebugZeroDWorldOverlay();
+		if (FluidPipesShouldDrawZeroDWorldOverlay())
+		{
+			DrawDebugZeroDWorldOverlay();
+		}
 	}
 }
 

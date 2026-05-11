@@ -2,6 +2,7 @@
 
 #include "Core/Actors/PipeFluidBasePointActor.h"
 #include "Core/Actors/PipeFluidPipeActor.h"
+#include "Data/FluidData.h"
 #include "Core/Simulation0D/FluidNetwork0DSubsystem.h"
 #include "Core/Simulation1D/FluidSegment1DSubsystem.h"
 #include "Engine/World.h"
@@ -97,6 +98,62 @@ static void ImportFluidActorsIntoZeroDSubsystem(UWorld* World)
 	}
 }
 
+static void ApplyFluidEndpointBoundaryOneD(FFluidSegmentStateOneD& Segment, bool bLeftEndpoint, const APipeFluidBasePointActor* EndpointActor)
+{
+	if (!EndpointActor)
+	{
+		return;
+	}
+
+	const EFluidSceneEndpointKind EndpointKind = EndpointActor->GetSceneEndpointKind();
+	if (EndpointKind == EFluidSceneEndpointKind::Face)
+	{
+		return;
+	}
+
+	if (EndpointKind == EFluidSceneEndpointKind::Source)
+	{
+		const float BoundaryPressure = (EndpointActor->OneDJunctionPressurePolicy == EFluidOneDJunctionPressurePolicy::FixedPressure)
+			? EndpointActor->OneDFixedJunctionPressure
+			: EndpointActor->ZeroDNetworkNodeState.Pressure;
+
+		if (bLeftEndpoint)
+		{
+			Segment.LeftBoundaryConditionType = EFluidBoundaryConditionTypeOneD::FixedPressure;
+			Segment.LeftBoundaryPressure = BoundaryPressure;
+		}
+		else
+		{
+			Segment.RightBoundaryConditionType = EFluidBoundaryConditionTypeOneD::FixedPressure;
+			Segment.RightBoundaryPressure = BoundaryPressure;
+		}
+		return;
+	}
+
+	if (EndpointKind == EFluidSceneEndpointKind::Consumer)
+	{
+		const float DemandMagnitude = FMath::Abs(EndpointActor->OneDExternalVolumeFlowRate);
+		if (DemandMagnitude <= KINDA_SMALL_NUMBER)
+		{
+			return;
+		}
+
+		// Pipe +X runs first endpoint to second: consumer withdrawal uses negative flow at left boundary, positive at right.
+		const float SignedBoundaryFlow = bLeftEndpoint ? -DemandMagnitude : DemandMagnitude;
+
+		if (bLeftEndpoint)
+		{
+			Segment.LeftBoundaryConditionType = EFluidBoundaryConditionTypeOneD::FixedFlow;
+			Segment.LeftBoundaryFlow = SignedBoundaryFlow;
+		}
+		else
+		{
+			Segment.RightBoundaryConditionType = EFluidBoundaryConditionTypeOneD::FixedFlow;
+			Segment.RightBoundaryFlow = SignedBoundaryFlow;
+		}
+	}
+}
+
 static void ImportFluidActorsIntoOneDSubsystem(UWorld* World)
 {
 	TArray<FFluidSegmentStateOneD> BuiltSegments;
@@ -122,6 +179,8 @@ static void ImportFluidActorsIntoOneDSubsystem(UWorld* World)
 		BuiltSegment.RightBoundaryConditionType = EFluidBoundaryConditionTypeOneD::Reflective;
 		BuiltSegment.LeftSceneNodeKey = PipeActor->PipeEndpointFirst ? PipeActor->PipeEndpointFirst->SceneNodeKey : INDEX_NONE;
 		BuiltSegment.RightSceneNodeKey = PipeActor->PipeEndpointSecond ? PipeActor->PipeEndpointSecond->SceneNodeKey : INDEX_NONE;
+		ApplyFluidEndpointBoundaryOneD(BuiltSegment, true, PipeActor->PipeEndpointFirst);
+		ApplyFluidEndpointBoundaryOneD(BuiltSegment, false, PipeActor->PipeEndpointSecond);
 		BuiltSegment.CellStates.Reset();
 		BuiltSegment.CellStates.SetNum(SafeCellCount);
 		BuiltSegment.CellLength = FMath::Max(BuiltSegment.SegmentLength / static_cast<float>(SafeCellCount), 0.01f);

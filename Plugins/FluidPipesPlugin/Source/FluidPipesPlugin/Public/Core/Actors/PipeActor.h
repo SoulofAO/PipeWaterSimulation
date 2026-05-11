@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Components/DynamicMeshComponent.h"
+#include "Materials/MaterialInterface.h"
 #include "PipeActor.generated.h"
 
 UCLASS(Abstract)
@@ -18,6 +19,9 @@ public:
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "FluidPipeVisual")
 	TObjectPtr<UDynamicMeshComponent> FluidDynamicMeshComponent;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidPipeVisual")
+	TObjectPtr<UMaterialInterface> FluidVisualMaterial;
 
 	virtual void RebuildFluidDynamicMesh();
 

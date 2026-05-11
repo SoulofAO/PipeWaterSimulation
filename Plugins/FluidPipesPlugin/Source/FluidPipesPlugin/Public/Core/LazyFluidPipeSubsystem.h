@@ -10,7 +10,7 @@
  * 
  */
 UCLASS()
-class FLUIDPIPESPLUGIN_API ULazyFluidPipeSubsystem : public UTickableWorldSubsystem
+class FLUIDPIPESPLUGIN_API ULazyFluidPipeSubsystem : public UWorldSubsystem
 {
 	GENERATED_BODY()
 	

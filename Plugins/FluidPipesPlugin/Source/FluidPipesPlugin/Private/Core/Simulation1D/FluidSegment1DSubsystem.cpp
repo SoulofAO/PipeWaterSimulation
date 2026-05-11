@@ -21,7 +21,8 @@ void UFluidSegment1DSubsystem::Deinitialize()
 void UFluidSegment1DSubsystem::Tick(float DeltaTime)
 {
 	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	if (Settings->EnableFluidSegmentSimulationOneD)
+	const bool bEnableFluidSegmentSimulationOneD = Settings->EnableFluidSegmentSimulationOneD;
+	if (bEnableFluidSegmentSimulationOneD)
 	{
 		AccumulatedTime += DeltaTime;
 		while (AccumulatedTime >= Settings->SimulationStepTimeOneD)
@@ -29,17 +30,17 @@ void UFluidSegment1DSubsystem::Tick(float DeltaTime)
 			SimulateStep(Settings->SimulationStepTimeOneD);
 			AccumulatedTime -= Settings->SimulationStepTimeOneD;
 		}
-	}
 
-	if (FluidPipesShouldEmitScreenDebugMessages())
-	{
-		UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D Tick: Segments={0}"), { FString::FromInt(SegmentStates.Num()) }), true, false, FLinearColor(0.0f, 1.0f, 1.0f), 0.0f);
-	}
+		if (FluidPipesShouldEmitScreenDebugMessages())
+		{
+			UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D Tick: Segments={0}"), { FString::FromInt(SegmentStates.Num()) }), true, false, FLinearColor(0.0f, 1.0f, 1.0f), 0.0f);
+		}
 
-	const int32 OneDWorldDebugDetailLevel = FluidPipesGetOneDWorldDebugDetailLevel();
-	if (OneDWorldDebugDetailLevel > 0)
-	{
-		DrawDebugOneDSegments(OneDWorldDebugDetailLevel);
+		const int32 OneDWorldDebugDetailLevel = FluidPipesGetOneDWorldDebugDetailLevel();
+		if (OneDWorldDebugDetailLevel > 0)
+		{
+			DrawDebugOneDSegments(OneDWorldDebugDetailLevel);
+		}
 	}
 }
 
@@ -100,7 +101,7 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 		const float EffectiveStepTime = FMath::Min(SimulationStepTime, StableStepTime);
 		if (FluidPipesShouldEmitScreenDebugMessages() && SimulationStepTime > StableStepTime + KINDA_SMALL_NUMBER)
 		{
-			UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D CFL Limited: Requested={0}, Stable={1}"), { FString::SanitizeFloat(SimulationStepTime), FString::SanitizeFloat(StableStepTime) }), true, false, FLinearColor::Yellow, 0.0f);
+			UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D CFL Limited: Requested={0}, Stable={1}"), { FString::SanitizeFloat(SimulationStepTime), FString::SanitizeFloat(StableStepTime) }), true, true, FLinearColor::Yellow, 0.0f);
 		}
 
 		FFluidSegmentStateOneD NextSegmentState = SegmentState;
