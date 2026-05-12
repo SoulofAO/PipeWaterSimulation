@@ -504,7 +504,7 @@ void FFluidSegment1DGpuSimulation::RebuildFromSegments(const TArray<FFluidSegmen
 	bResourcesAllocated = true;
 }
 
-void FFluidSegment1DGpuSimulation::SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, const float SimulationStepTime)
+void FFluidSegment1DGpuSimulation::SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, const float SimulationStepTime, const bool bWaitForReadbackBeforeLock)
 {
 	if (!bResourcesAllocated || TotalCellsGlobal == 0u || !IsAvailable())
 	{
@@ -686,9 +686,14 @@ void FFluidSegment1DGpuSimulation::SimulateStep(UWorld* World, TArray<FFluidSegm
 	FlushRenderingCommands();
 	const uint32 ReadBytes = TotalCellsGlobal * sizeof(float);
 	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuReadbackLock)(
-		[this, &PressureScratch, &FlowScratch, ReadBytes](FRHICommandListImmediate& ImmediateCommands)
+		[this, &PressureScratch, &FlowScratch, ReadBytes, bWaitForReadbackBeforeLock](FRHICommandListImmediate& ImmediateCommands)
 		{
-			if (!GpuPressureReadback->IsReady() || !GpuFlowReadback->IsReady())
+			if (bWaitForReadbackBeforeLock)
+			{
+				GpuPressureReadback->Wait(ImmediateCommands, FRHIGPUMask::All());
+				GpuFlowReadback->Wait(ImmediateCommands, FRHIGPUMask::All());
+			}
+			else if (!GpuPressureReadback->IsReady() || !GpuFlowReadback->IsReady())
 			{
 				return;
 			}

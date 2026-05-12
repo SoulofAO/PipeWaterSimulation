@@ -334,7 +334,7 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 		{
 			UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D GPU CFL Limited: Requested={0}, Effective={1}"), { FString::SanitizeFloat(SimulationStepTime), FString::SanitizeFloat(GpuEffectiveStepTime) }), true, true, FLinearColor::Yellow, 0.0f);
 		}
-		ActiveSimulation->SimulateStep(GetWorld(), SegmentStates, SegmentPipeActors, GpuEffectiveStepTime);
+		ActiveSimulation->SimulateStep(GetWorld(), SegmentStates, SegmentPipeActors, GpuEffectiveStepTime, Settings->FluidSegmentSimulationOneDGpuWaitForReadbackBeforeLock);
 		ApplyJunctionCouplingToNextSegmentStates(CurrentSnapshot, SegmentStates);
 		for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
 		{
@@ -348,13 +348,13 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 	}
 	else
 	{
-		ActiveSimulation->SimulateStep(GetWorld(), SegmentStates, SegmentPipeActors, SimulationStepTime);
+		ActiveSimulation->SimulateStep(GetWorld(), SegmentStates, SegmentPipeActors, SimulationStepTime, false);
 	}
 
 	if (Settings->FluidSegmentSimulationOneDCompareGpuToCpu && bActiveSimulationUsesGpu && CpuCompareSnapshot.Num() == SegmentStates.Num() && CompareSimulation)
 	{
 		TArray<FFluidSegmentStateOneD> CpuWorking = CpuCompareSnapshot;
-		CompareSimulation->SimulateStep(GetWorld(), CpuWorking, SegmentPipeActors, SimulationStepTime);
+		CompareSimulation->SimulateStep(GetWorld(), CpuWorking, SegmentPipeActors, SimulationStepTime, false);
 		float MaxAbsPressureDifference = 0.0f;
 		float MaxAbsFlowDifference = 0.0f;
 		for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)

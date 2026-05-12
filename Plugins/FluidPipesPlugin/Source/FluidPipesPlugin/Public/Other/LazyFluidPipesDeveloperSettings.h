@@ -42,6 +42,9 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
 	bool FluidSegmentSimulationOneDCompareGpuToCpu = false;
 
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
+	bool FluidSegmentSimulationOneDGpuWaitForReadbackBeforeLock = false;
+
 	UPROPERTY(EditAnywhere, Config, Category = "FluidLevelImport")
 	EFluidLevelPipeImportTarget LevelPipeImportTarget = EFluidLevelPipeImportTarget::Disabled;
 
