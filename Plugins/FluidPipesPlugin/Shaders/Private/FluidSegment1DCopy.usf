@@ -1,0 +1,21 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/FluidPipesPlugin/Private/FluidSegment1DCommon.ush"
+
+StructuredBuffer<float> CurrentPressure;
+StructuredBuffer<float> CurrentFlow;
+RWStructuredBuffer<float> NextPressure;
+RWStructuredBuffer<float> NextFlow;
+
+uint TotalCells;
+
+[numthreads(FLUID_SEGMENT_1D_GPU_THREAD_GROUP_SIZE, 1, 1)]
+void FluidSegment1DCopyMain(uint3 DispatchThreadId : SV_DispatchThreadId)
+{
+	const uint CellIndex = DispatchThreadId.x;
+	if (CellIndex >= TotalCells)
+	{
+		return;
+	}
+	NextPressure[CellIndex] = CurrentPressure[CellIndex];
+	NextFlow[CellIndex] = CurrentFlow[CellIndex];
+}

@@ -2,6 +2,7 @@
 
 #include "Core/Actors/PipeFluidBasePointActor.h"
 #include "Core/Actors/PipeFluidPipeActor.h"
+#include "Core/Simulation1D/FluidSegment1DGpuSimulation.h"
 #include "DrawDebugHelpers.h"
 #include "FluidPipesDrawDebug.h"
 #include "FluidPipesWorldDebugText.h"
@@ -33,12 +34,14 @@ static float FluidOneDPressureSampleNearBoundaryForJunctionCoupling(const TArray
 void UFluidSegment1DSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	FluidSegment1DGpuSimulation = MakeUnique<FFluidSegment1DGpuSimulation>();
 	ResetSimulationState();
 }
 
 void UFluidSegment1DSubsystem::Deinitialize()
 {
 	ResetSimulationState();
+	FluidSegment1DGpuSimulation.Reset();
 	Super::Deinitialize();
 }
 
@@ -75,6 +78,10 @@ TStatId UFluidSegment1DSubsystem::GetStatId() const
 
 void UFluidSegment1DSubsystem::ResetSimulationState()
 {
+	if (FluidSegment1DGpuSimulation)
+	{
+		FluidSegment1DGpuSimulation->Release();
+	}
 	SegmentStates.Reset();
 	SegmentPipeActors.Reset();
 	JunctionSceneNodeKeyToIncidentEndpoints.Reset();
@@ -109,16 +116,20 @@ void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegm
 	{
 		UpdateDerivedCellValues(SegmentState);
 	}
-	RebuildJunctionSceneNodeKeyTopology();
+	RebuildJunctionSceneNodeKeyTopology(SegmentStates);
 	AccumulatedTime = 0.0f;
+	if (FluidSegment1DGpuSimulation)
+	{
+		FluidSegment1DGpuSimulation->RebuildFromSegments(SegmentStates, SegmentPipeActors);
+	}
 }
 
-void UFluidSegment1DSubsystem::RebuildJunctionSceneNodeKeyTopology()
+void UFluidSegment1DSubsystem::RebuildJunctionSceneNodeKeyTopology(const TArray<FFluidSegmentStateOneD>& SourceSegmentStates)
 {
 	JunctionSceneNodeKeyToIncidentEndpoints.Reset();
-	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	for (int32 SegmentIndex = 0; SegmentIndex < SourceSegmentStates.Num(); ++SegmentIndex)
 	{
-		const FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+		const FFluidSegmentStateOneD& SegmentState = SourceSegmentStates[SegmentIndex];
 		if (SegmentState.CellStates.Num() < 2)
 		{
 			continue;
@@ -209,9 +220,14 @@ void UFluidSegment1DSubsystem::ApplyJunctionCouplingToNextSegmentStates(const TA
 
 void UFluidSegment1DSubsystem::UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors()
 {
-	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors(SegmentStates);
+}
+
+void UFluidSegment1DSubsystem::UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors(TArray<FFluidSegmentStateOneD>& TargetSegmentStates)
+{
+	for (int32 SegmentIndex = 0; SegmentIndex < TargetSegmentStates.Num(); ++SegmentIndex)
 	{
-		FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+		FFluidSegmentStateOneD& SegmentState = TargetSegmentStates[SegmentIndex];
 		if (SegmentState.CellStates.Num() < 2)
 		{
 			continue;
@@ -257,18 +273,78 @@ void UFluidSegment1DSubsystem::UpdateOneDimensionBoundaryFlowsFromAttachedPipePo
 
 void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 {
+	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
+	if (Settings->FluidSegmentSimulationOneDUseComputeShader && FluidSegment1DGpuSimulation && FluidSegment1DGpuSimulation->IsComputeShaderPathAvailable())
+	{
+		TArray<FFluidSegmentStateOneD> CpuCompareSnapshot;
+		if (Settings->FluidSegmentSimulationOneDCompareGpuToCpu)
+		{
+			CpuCompareSnapshot = SegmentStates;
+		}
+		UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors();
+		RebuildJunctionSceneNodeKeyTopology(SegmentStates);
+		TArray<FFluidSegmentStateOneD> CurrentSnapshot = SegmentStates;
+		float GpuEffectiveStepTime = SimulationStepTime;
+		for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+		{
+			GpuEffectiveStepTime = FMath::Min(GpuEffectiveStepTime, ComputeStableStepTime(SegmentStates[SegmentIndex]));
+		}
+		if (FluidPipesShouldEmitScreenDebugMessages() && SimulationStepTime > GpuEffectiveStepTime + KINDA_SMALL_NUMBER)
+		{
+			UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D GPU CFL Limited: Requested={0}, Effective={1}"), { FString::SanitizeFloat(SimulationStepTime), FString::SanitizeFloat(GpuEffectiveStepTime) }), true, true, FLinearColor::Yellow, 0.0f);
+		}
+		FluidSegment1DGpuSimulation->ExecuteSimulationStep(GetWorld(), SegmentStates, SegmentPipeActors, GpuEffectiveStepTime);
+		ApplyJunctionCouplingToNextSegmentStates(CurrentSnapshot, SegmentStates);
+		for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+		{
+			FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+			UpdateDerivedCellValues(SegmentState);
+			if (!IsSegmentStateFinite(SegmentState))
+			{
+				SegmentState = CurrentSnapshot[SegmentIndex];
+			}
+		}
+		if (Settings->FluidSegmentSimulationOneDCompareGpuToCpu && CpuCompareSnapshot.Num() == SegmentStates.Num())
+		{
+			TArray<FFluidSegmentStateOneD> CpuWorking = CpuCompareSnapshot;
+			SimulateStepCpu(SimulationStepTime, CpuWorking);
+			float MaxAbsPressureDifference = 0.0f;
+			float MaxAbsFlowDifference = 0.0f;
+			for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+			{
+				const FFluidSegmentStateOneD& GpuSegmentState = SegmentStates[SegmentIndex];
+				const FFluidSegmentStateOneD& CpuSegmentState = CpuWorking[SegmentIndex];
+				const int32 CellCount = GpuSegmentState.CellStates.Num();
+				for (int32 CellIndex = 0; CellIndex < CellCount; ++CellIndex)
+				{
+					MaxAbsPressureDifference = FMath::Max(MaxAbsPressureDifference, FMath::Abs(GpuSegmentState.CellStates[CellIndex].Pressure - CpuSegmentState.CellStates[CellIndex].Pressure));
+					MaxAbsFlowDifference = FMath::Max(MaxAbsFlowDifference, FMath::Abs(GpuSegmentState.CellStates[CellIndex].FlowRate - CpuSegmentState.CellStates[CellIndex].FlowRate));
+				}
+			}
+			if (FluidPipesShouldEmitScreenDebugMessages())
+			{
+				UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D GPU vs CPU max |dP|={0} max |dQ|={1}"), { FString::SanitizeFloat(MaxAbsPressureDifference), FString::SanitizeFloat(MaxAbsFlowDifference) }), true, false, FLinearColor(0.4f, 0.8f, 1.0f), 0.0f);
+			}
+		}
+		return;
+	}
+	SimulateStepCpu(SimulationStepTime, SegmentStates);
+}
+
+void UFluidSegment1DSubsystem::SimulateStepCpu(float SimulationStepTime, TArray<FFluidSegmentStateOneD>& WorkingSegmentStates)
+{
 	const UWorld* World = GetWorld();
 	const float GravityAcceleration = World ? FMath::Abs(World->GetGravityZ()) : 980.0f;
 	const FVector GravityDirectionWorld = FVector::UpVector;
 
-	UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors();
-	RebuildJunctionSceneNodeKeyTopology();
+	UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors(WorkingSegmentStates);
+	RebuildJunctionSceneNodeKeyTopology(WorkingSegmentStates);
 
 	TArray<FFluidSegmentStateOneD> NextSegmentStates;
-	NextSegmentStates.SetNum(SegmentStates.Num());
-	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	NextSegmentStates.SetNum(WorkingSegmentStates.Num());
+	for (int32 SegmentIndex = 0; SegmentIndex < WorkingSegmentStates.Num(); ++SegmentIndex)
 	{
-		FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+		FFluidSegmentStateOneD& SegmentState = WorkingSegmentStates[SegmentIndex];
 		if (SegmentState.CellStates.Num() < 2)
 		{
 			NextSegmentStates[SegmentIndex] = SegmentState;
@@ -300,11 +376,11 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 		NextSegmentStates[SegmentIndex] = MoveTemp(NextSegmentState);
 	}
 
-	ApplyJunctionCouplingToNextSegmentStates(SegmentStates, NextSegmentStates);
+	ApplyJunctionCouplingToNextSegmentStates(WorkingSegmentStates, NextSegmentStates);
 
-	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	for (int32 SegmentIndex = 0; SegmentIndex < WorkingSegmentStates.Num(); ++SegmentIndex)
 	{
-		FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+		FFluidSegmentStateOneD& SegmentState = WorkingSegmentStates[SegmentIndex];
 		FFluidSegmentStateOneD& NextSegmentState = NextSegmentStates[SegmentIndex];
 		UpdateDerivedCellValues(NextSegmentState);
 		if (!IsSegmentStateFinite(NextSegmentState))

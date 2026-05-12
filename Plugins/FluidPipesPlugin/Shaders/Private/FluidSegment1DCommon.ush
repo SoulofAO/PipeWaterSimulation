@@ -1,0 +1,26 @@
+#ifndef FLUID_SEGMENT_1D_COMMON_USH
+#define FLUID_SEGMENT_1D_COMMON_USH
+
+#define FLUID_SEGMENT_1D_GPU_THREAD_GROUP_SIZE 64u
+#define FLUID_SEGMENT_1D_UINTS_PER_SEGMENT 32u
+
+#define FLUID_SEGMENT_1D_BOUNDARY_REFLECTIVE 0u
+#define FLUID_SEGMENT_1D_BOUNDARY_FIXED_PRESSURE 1u
+#define FLUID_SEGMENT_1D_BOUNDARY_FIXED_FLOW 2u
+
+#define FLUID_SEGMENT_1D_ENDPOINT_NONE 0u
+#define FLUID_SEGMENT_1D_ENDPOINT_SOURCE 1u
+#define FLUID_SEGMENT_1D_ENDPOINT_PRESSURE_CONSUMER 2u
+#define FLUID_SEGMENT_1D_ENDPOINT_CONSTANT_FLOW 3u
+
+uint FluidSegment1DLoadSegmentUint(StructuredBuffer<uint> SegmentUintTable, uint SegmentIndex, uint FieldIndex)
+{
+	return SegmentUintTable[SegmentIndex * FLUID_SEGMENT_1D_UINTS_PER_SEGMENT + FieldIndex];
+}
+
+float FluidSegment1DLoadSegmentFloat(StructuredBuffer<uint> SegmentUintTable, uint SegmentIndex, uint FieldIndex)
+{
+	return asfloat(FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, FieldIndex));
+}
+
+#endif

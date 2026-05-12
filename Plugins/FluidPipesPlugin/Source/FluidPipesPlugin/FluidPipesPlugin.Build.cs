@@ -42,6 +42,9 @@ public class FluidPipesPlugin : ModuleRules
                 "DeveloperSettings",
 				"GeometryCore",
 				"GeometryScriptingCore",
+				"Projects",
+				"RenderCore",
+				"RHI",
 			}
 			);
 		

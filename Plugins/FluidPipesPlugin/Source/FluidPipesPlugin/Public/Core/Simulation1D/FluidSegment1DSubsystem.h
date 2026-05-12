@@ -2,7 +2,9 @@
 
 #include "CoreMinimal.h"
 #include "Data/FluidData.h"
+#include "Core/Simulation1D/FluidSegment1DGpuSimulation.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Templates/UniquePtr.h"
 #include "UObject/WeakObjectPtr.h"
 #include "FluidSegment1DSubsystem.generated.h"
 
@@ -37,8 +39,10 @@ private:
 	};
 
 	void SimulateStep(float SimulationStepTime);
+	void SimulateStepCpu(float SimulationStepTime, TArray<FFluidSegmentStateOneD>& WorkingSegmentStates);
 	void UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors();
-	void RebuildJunctionSceneNodeKeyTopology();
+	void UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors(TArray<FFluidSegmentStateOneD>& TargetSegmentStates);
+	void RebuildJunctionSceneNodeKeyTopology(const TArray<FFluidSegmentStateOneD>& SourceSegmentStates);
 	void ApplyJunctionCouplingToNextSegmentStates(const TArray<FFluidSegmentStateOneD>& CurrentSegmentStates, TArray<FFluidSegmentStateOneD>& NextSegmentStates) const;
 	void SolveSegmentWaterHammerStep(const FFluidSegmentStateOneD& CurrentSegmentState, float SimulationStepTime, float GravityAccelerationAlongAxis, FFluidSegmentStateOneD& NextSegmentState) const;
 	void ApplyBoundaryConditions(const FFluidSegmentStateOneD& CurrentSegmentState, FFluidSegmentStateOneD& NextSegmentState) const;
@@ -56,4 +60,6 @@ private:
 	TMap<int32, TArray<FFluidOneDJunctionEndpointIncident>> JunctionSceneNodeKeyToIncidentEndpoints;
 
 	float AccumulatedTime = 0.0f;
+
+	TUniquePtr<FFluidSegment1DGpuSimulation> FluidSegment1DGpuSimulation;
 };

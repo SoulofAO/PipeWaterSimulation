@@ -36,6 +36,12 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD", meta = (ClampMin = "0.1", ClampMax = "1.0", UIMin = "0.1", UIMax = "1.0"))
 	float OneDSolverCflFactor = 0.9f;
 
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
+	bool FluidSegmentSimulationOneDUseComputeShader = false;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
+	bool FluidSegmentSimulationOneDCompareGpuToCpu = false;
+
 	UPROPERTY(EditAnywhere, Config, Category = "FluidLevelImport")
 	EFluidLevelPipeImportTarget LevelPipeImportTarget = EFluidLevelPipeImportTarget::Disabled;
 
