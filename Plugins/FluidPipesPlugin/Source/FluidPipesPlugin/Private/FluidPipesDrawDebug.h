@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 
 int32 FluidPipesGetDrawDebugLevel();
+bool FluidPipesIsWorldLocationWithinDebugDrawDistance(const UWorld* World, const FVector& WorldLocation);
 
 FORCEINLINE bool FluidPipesShouldDrawDebug()
 {

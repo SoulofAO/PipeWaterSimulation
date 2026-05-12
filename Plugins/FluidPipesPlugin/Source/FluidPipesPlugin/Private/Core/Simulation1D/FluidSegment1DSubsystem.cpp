@@ -527,6 +527,10 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 
 		const FVector AxisDirectionWorld = PipeActor->GetActorForwardVector().GetSafeNormal();
 		const FVector CenterWorld = PipeActor->GetActorLocation();
+		if (!FluidPipesIsWorldLocationWithinDebugDrawDistance(World, CenterWorld))
+		{
+			continue;
+		}
 		const float HalfLength = SegmentState.SegmentLength * 0.5f;
 		const FVector AxisStartWorld = CenterWorld - AxisDirectionWorld * HalfLength;
 		const FVector AxisEndWorld = CenterWorld + AxisDirectionWorld * HalfLength;

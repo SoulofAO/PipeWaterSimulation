@@ -271,6 +271,10 @@ void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
 	for (int32 NodeIndex = 0; NodeIndex < NetworkNodeStates.Num(); ++NodeIndex)
 	{
 		const FVector NodeWorldLocation = NodeWorldLocations[NodeIndex];
+		if (!FluidPipesIsWorldLocationWithinDebugDrawDistance(World, NodeWorldLocation))
+		{
+			continue;
+		}
 		const FFluidNetworkNodeStateZeroD& NetworkNodeState = NetworkNodeStates[NodeIndex];
 		const float NormalizedPressure = FMath::Clamp((NetworkNodeState.Pressure - MinimumPressure) / PressureSpan, 0.0f, 1.0f);
 		const FColor PressureDebugColor = FLinearColor::LerpUsingHSV(FLinearColor::Blue, FLinearColor::Red, NormalizedPressure).ToFColor(true);
@@ -302,6 +306,11 @@ void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
 
 		const FVector FromWorldLocation = NodeWorldLocations[NetworkEdgeState.FromNodeIndex];
 		const FVector ToWorldLocation = NodeWorldLocations[NetworkEdgeState.ToNodeIndex];
+		const FVector EdgeMidWorldLocation = (FromWorldLocation + ToWorldLocation) * 0.5f;
+		if (!FluidPipesIsWorldLocationWithinDebugDrawDistance(World, EdgeMidWorldLocation))
+		{
+			continue;
+		}
 		const float FlowRateSigned = NetworkEdgeState.FlowRate;
 		const FColor FlowDebugColor = FlowRateSigned >= 0.0f ? FColor::Cyan : FColor::Orange;
 		const float LineThickness = FMath::Clamp(FMath::Abs(FlowRateSigned) * 0.02f, 1.2f, 10.0f);
@@ -312,7 +321,7 @@ void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
 
 		if (DrawZeroDWireGeometry && WorldDebugSettings->WorldDebugIncludeZeroDFlowArrows && FMath::Abs(FlowRateSigned) > KINDA_SMALL_NUMBER)
 		{
-			const FVector EdgeMidWorld = (FromWorldLocation + ToWorldLocation) * 0.5f;
+			const FVector EdgeMidWorld = EdgeMidWorldLocation;
 			const FVector EdgeDirectionWorld = (ToWorldLocation - FromWorldLocation).GetSafeNormal();
 			const FVector ArrowDirectionWorld = EdgeDirectionWorld * FMath::Sign(FlowRateSigned);
 			const float ArrowHalfLength = FMath::Clamp(FMath::Abs(FlowRateSigned) * 0.0015f, 8.0f, 120.0f);

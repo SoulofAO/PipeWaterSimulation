@@ -47,6 +47,16 @@ public class FluidPipesPlugin : ModuleRules
 				"RHI",
 			}
 			);
+
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.AddRange(
+				new string[]
+				{
+					"UnrealEd",
+				}
+			);
+		}
 		
 		
 		DynamicallyLoadedModuleNames.AddRange(
