@@ -186,7 +186,7 @@ FFluidSegment1DGpuSimulation::~FFluidSegment1DGpuSimulation()
 	Release();
 }
 
-bool FFluidSegment1DGpuSimulation::IsComputeShaderPathAvailable() const
+bool FFluidSegment1DGpuSimulation::IsAvailable() const
 {
 	return GMaxRHIFeatureLevel >= ERHIFeatureLevel::SM5;
 }
@@ -504,9 +504,9 @@ void FFluidSegment1DGpuSimulation::RebuildFromSegments(const TArray<FFluidSegmen
 	bResourcesAllocated = true;
 }
 
-void FFluidSegment1DGpuSimulation::ExecuteSimulationStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, const float SimulationStepTime)
+void FFluidSegment1DGpuSimulation::SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, const float SimulationStepTime)
 {
-	if (!bResourcesAllocated || TotalCellsGlobal == 0u || !IsComputeShaderPathAvailable())
+	if (!bResourcesAllocated || TotalCellsGlobal == 0u || !IsAvailable())
 	{
 		return;
 	}
@@ -684,22 +684,25 @@ void FFluidSegment1DGpuSimulation::ExecuteSimulationStep(UWorld* World, TArray<F
 			GpuFlowReadback->EnqueueCopy(ImmediateCommands, FlowGpuBufferB, PressureBytes);
 		});
 	FlushRenderingCommands();
-
-	while (!GpuPressureReadback->IsReady() || !GpuFlowReadback->IsReady())
-	{
-		FPlatformProcess::Sleep(0.0f);
-	}
-
 	const uint32 ReadBytes = TotalCellsGlobal * sizeof(float);
-	void* PressureRead = GpuPressureReadback->Lock(ReadBytes);
-	void* FlowRead = GpuFlowReadback->Lock(ReadBytes);
-	if (PressureRead && FlowRead)
-	{
-		FMemory::Memcpy(PressureScratch.GetData(), PressureRead, ReadBytes);
-		FMemory::Memcpy(FlowScratch.GetData(), FlowRead, ReadBytes);
-	}
-	GpuPressureReadback->Unlock();
-	GpuFlowReadback->Unlock();
+	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuReadbackLock)(
+		[this, &PressureScratch, &FlowScratch, ReadBytes](FRHICommandListImmediate& ImmediateCommands)
+		{
+			if (!GpuPressureReadback->IsReady() || !GpuFlowReadback->IsReady())
+			{
+				return;
+			}
+			void* PressureRead = GpuPressureReadback->Lock(ReadBytes);
+			void* FlowRead = GpuFlowReadback->Lock(ReadBytes);
+			if (PressureRead && FlowRead)
+			{
+				FMemory::Memcpy(PressureScratch.GetData(), PressureRead, ReadBytes);
+				FMemory::Memcpy(FlowScratch.GetData(), FlowRead, ReadBytes);
+			}
+			GpuPressureReadback->Unlock();
+			GpuFlowReadback->Unlock();
+		});
+	FlushRenderingCommands();
 
 	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
 	{

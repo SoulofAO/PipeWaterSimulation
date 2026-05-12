@@ -1,8 +1,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Core/Simulation1D/BaseFluidSegment1DSimulation.h"
 #include "Data/FluidData.h"
-#include "Core/Simulation1D/FluidSegment1DGpuSimulation.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Templates/UniquePtr.h"
 #include "UObject/WeakObjectPtr.h"
@@ -39,7 +39,6 @@ private:
 	};
 
 	void SimulateStep(float SimulationStepTime);
-	void SimulateStepCpu(float SimulationStepTime, TArray<FFluidSegmentStateOneD>& WorkingSegmentStates);
 	void UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors();
 	void UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors(TArray<FFluidSegmentStateOneD>& TargetSegmentStates);
 	void RebuildJunctionSceneNodeKeyTopology(const TArray<FFluidSegmentStateOneD>& SourceSegmentStates);
@@ -61,5 +60,7 @@ private:
 
 	float AccumulatedTime = 0.0f;
 
-	TUniquePtr<FFluidSegment1DGpuSimulation> FluidSegment1DGpuSimulation;
+	TUniquePtr<FBaseFluidSegment1DSimulation> ActiveSimulation;
+	TUniquePtr<FBaseFluidSegment1DSimulation> CompareSimulation;
+	bool bActiveSimulationUsesGpu = false;
 };

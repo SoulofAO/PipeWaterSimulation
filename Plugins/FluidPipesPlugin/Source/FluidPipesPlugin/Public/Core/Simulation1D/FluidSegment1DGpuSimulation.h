@@ -1,27 +1,25 @@
 #pragma once
 
-#include "CoreMinimal.h"
-#include "Data/FluidData.h"
+#include "Core/Simulation1D/BaseFluidSegment1DSimulation.h"
 #include "RHI.h"
 #include "RHIGPUReadback.h"
-#include "UObject/WeakObjectPtr.h"
 
 class APipeFluidPipeActor;
 class UWorld;
 
-class FFluidSegment1DGpuSimulation
+class FFluidSegment1DGpuSimulation : public FBaseFluidSegment1DSimulation
 {
 public:
 	FFluidSegment1DGpuSimulation();
 	~FFluidSegment1DGpuSimulation();
 
-	bool IsComputeShaderPathAvailable() const;
+	virtual bool IsAvailable() const override;
 
-	void Release();
+	virtual void Release() override;
 
-	void RebuildFromSegments(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors);
+	virtual void RebuildFromSegments(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors) override;
 
-	void ExecuteSimulationStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, float SimulationStepTime);
+	virtual void SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, float SimulationStepTime) override;
 
 private:
 	void ReleaseInternal();
