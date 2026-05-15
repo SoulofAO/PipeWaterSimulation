@@ -19,15 +19,31 @@ public:
 
 	virtual void RebuildFromSegments(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors) override;
 
+	virtual void RebuildFromSegments(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, UWorld* SimulationWorld);
+
 	virtual void SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, float SimulationStepTime, bool bWaitForReadbackBeforeLock) override;
+
+	void SimulateStepGpuOnly(float SimulationStepTime);
+
+	void ReadbackToSegmentStates(TArray<FFluidSegmentStateOneD>& SegmentStates, bool bWaitForCompletion);
+
+	bool IsGpuStateResident() const;
 
 private:
 	void ReleaseInternal();
+
+	void BuildJunctionGpuWorkLists(const TArray<FFluidSegmentStateOneD>& SegmentStates);
+
+	void BakeSegmentUintTableAtImport(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, float GravityAcceleration);
+
+	void DispatchGpuSimulationStep(FRHICommandListImmediate& ImmediateCommands, float SimulationStepTime, bool bReadFromA);
 
 	TArray<uint32> SegmentUintTableCpu;
 	TArray<uint32> InteriorWorkPackedCpu;
 	TArray<uint32> SourceBoundaryWorkPackedCpu;
 	TArray<uint32> PressureConsumerBoundaryWorkPackedCpu;
+	TArray<uint32> JunctionHeadersPackedCpu;
+	TArray<uint32> JunctionIncidentsPackedCpu;
 
 	TArray<uint32> SegmentCellBaseCpu;
 	TArray<uint32> SegmentCellCountCpu;
@@ -37,6 +53,8 @@ private:
 	uint32 SegmentCount = 0u;
 	uint32 SourceBoundaryCount = 0u;
 	uint32 PressureConsumerBoundaryCount = 0u;
+	uint32 JunctionCount = 0u;
+	uint32 TotalJunctionIncidents = 0u;
 
 	TUniquePtr<FRHIGPUBufferReadback> GpuPressureReadback;
 	TUniquePtr<FRHIGPUBufferReadback> GpuFlowReadback;
@@ -52,6 +70,16 @@ private:
 
 	FBufferRHIRef PressureConsumerBoundaryWorkGpuBuffer;
 	FShaderResourceViewRHIRef PressureConsumerBoundaryWorkGpuSrv;
+
+	FBufferRHIRef JunctionHeadersGpuBuffer;
+	FShaderResourceViewRHIRef JunctionHeadersGpuSrv;
+
+	FBufferRHIRef JunctionIncidentsGpuBuffer;
+	FShaderResourceViewRHIRef JunctionIncidentsGpuSrv;
+
+	FBufferRHIRef JunctionPressureGpuBuffer;
+	FShaderResourceViewRHIRef JunctionPressureGpuSrv;
+	FUnorderedAccessViewRHIRef JunctionPressureGpuUav;
 
 	FBufferRHIRef PressureGpuBufferA;
 	FBufferRHIRef PressureGpuBufferB;
@@ -69,4 +97,6 @@ private:
 	FUnorderedAccessViewRHIRef FlowGpuBufferBUav;
 
 	bool bResourcesAllocated = false;
+	bool bGpuStateResident = false;
+	bool bReadFromBufferA = true;
 };

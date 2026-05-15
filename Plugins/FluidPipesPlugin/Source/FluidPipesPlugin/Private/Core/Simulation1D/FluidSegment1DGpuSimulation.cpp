@@ -9,7 +9,6 @@
 #include "Data/FluidData.h"
 #include "Engine/World.h"
 #include "GlobalShader.h"
-#include "HAL/IConsoleManager.h"
 #include "Math/UnrealMathUtility.h"
 #include "RHICommandList.h"
 #include "RHIResourceUtils.h"
@@ -17,7 +16,6 @@
 #include "RHIGPUReadback.h"
 #include "RenderGraphUtils.h"
 #include "RenderingThread.h"
-#include "ShaderCompilerCore.h"
 #include "ShaderParameterStruct.h"
 
 static float FluidSegment1DComputeCrossSectionArea(const FFluidSegmentStateOneD& SegmentState)
@@ -179,6 +177,56 @@ public:
 
 IMPLEMENT_GLOBAL_SHADER(FFluidSegment1DBoundaryPressureConsumerCS, "/Plugin/FluidPipesPlugin/Private/FluidSegment1DBoundaryPressureConsumer.usf", "FluidSegment1DBoundaryPressureConsumerMain", SF_Compute);
 
+class FFluidSegment1DJunctionReduceCS : public FGlobalShader
+{
+public:
+	DECLARE_GLOBAL_SHADER(FFluidSegment1DJunctionReduceCS);
+	SHADER_USE_PARAMETER_STRUCT(FFluidSegment1DJunctionReduceCS, FGlobalShader);
+
+	static constexpr uint32 ThreadGroupSize = 64u;
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER(uint32, JunctionCount)
+		SHADER_PARAMETER_SRV(StructuredBuffer<uint>, SegmentUintTable)
+		SHADER_PARAMETER_SRV(StructuredBuffer<uint>, JunctionHeadersPacked)
+		SHADER_PARAMETER_SRV(StructuredBuffer<uint>, JunctionIncidentsPacked)
+		SHADER_PARAMETER_SRV(StructuredBuffer<float>, NextPressure)
+		SHADER_PARAMETER_UAV(RWStructuredBuffer<float>, JunctionPressureOut)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+};
+
+IMPLEMENT_GLOBAL_SHADER(FFluidSegment1DJunctionReduceCS, "/Plugin/FluidPipesPlugin/Private/FluidSegment1DJunctionReduce.usf", "FluidSegment1DJunctionReduceMain", SF_Compute);
+
+class FFluidSegment1DJunctionApplyCS : public FGlobalShader
+{
+public:
+	DECLARE_GLOBAL_SHADER(FFluidSegment1DJunctionApplyCS);
+	SHADER_USE_PARAMETER_STRUCT(FFluidSegment1DJunctionApplyCS, FGlobalShader);
+
+	static constexpr uint32 ThreadGroupSize = 64u;
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER(uint32, TotalJunctionIncidents)
+		SHADER_PARAMETER_SRV(StructuredBuffer<uint>, SegmentUintTable)
+		SHADER_PARAMETER_SRV(StructuredBuffer<uint>, JunctionIncidentsPacked)
+		SHADER_PARAMETER_SRV(StructuredBuffer<float>, JunctionPressureOut)
+		SHADER_PARAMETER_UAV(RWStructuredBuffer<float>, NextPressure)
+		SHADER_PARAMETER_UAV(RWStructuredBuffer<float>, NextFlow)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+};
+
+IMPLEMENT_GLOBAL_SHADER(FFluidSegment1DJunctionApplyCS, "/Plugin/FluidPipesPlugin/Private/FluidSegment1DJunctionApply.usf", "FluidSegment1DJunctionApplyMain", SF_Compute);
+
 FFluidSegment1DGpuSimulation::FFluidSegment1DGpuSimulation() = default;
 
 FFluidSegment1DGpuSimulation::~FFluidSegment1DGpuSimulation()
@@ -189,6 +237,11 @@ FFluidSegment1DGpuSimulation::~FFluidSegment1DGpuSimulation()
 bool FFluidSegment1DGpuSimulation::IsAvailable() const
 {
 	return GMaxRHIFeatureLevel >= ERHIFeatureLevel::SM5;
+}
+
+bool FFluidSegment1DGpuSimulation::IsGpuStateResident() const
+{
+	return bGpuStateResident;
 }
 
 void FFluidSegment1DGpuSimulation::Release()
@@ -204,6 +257,7 @@ void FFluidSegment1DGpuSimulation::ReleaseInternal()
 {
 	GpuPressureReadback.Reset();
 	GpuFlowReadback.Reset();
+	bGpuStateResident = false;
 	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuRelease)(
 		[this](FRHICommandListImmediate& ImmediateCommands)
 		{
@@ -215,6 +269,13 @@ void FFluidSegment1DGpuSimulation::ReleaseInternal()
 			SourceBoundaryWorkGpuSrv.SafeRelease();
 			PressureConsumerBoundaryWorkGpuBuffer.SafeRelease();
 			PressureConsumerBoundaryWorkGpuSrv.SafeRelease();
+			JunctionHeadersGpuBuffer.SafeRelease();
+			JunctionHeadersGpuSrv.SafeRelease();
+			JunctionIncidentsGpuBuffer.SafeRelease();
+			JunctionIncidentsGpuSrv.SafeRelease();
+			JunctionPressureGpuBuffer.SafeRelease();
+			JunctionPressureGpuSrv.SafeRelease();
+			JunctionPressureGpuUav.SafeRelease();
 			PressureGpuBufferA.SafeRelease();
 			PressureGpuBufferB.SafeRelease();
 			FlowGpuBufferA.SafeRelease();
@@ -232,43 +293,58 @@ void FFluidSegment1DGpuSimulation::ReleaseInternal()
 	bResourcesAllocated = false;
 }
 
-void FFluidSegment1DGpuSimulation::RebuildFromSegments(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors)
+void FFluidSegment1DGpuSimulation::BuildJunctionGpuWorkLists(const TArray<FFluidSegmentStateOneD>& SegmentStates)
 {
-	ReleaseInternal();
+	JunctionHeadersPackedCpu.Reset();
+	JunctionIncidentsPackedCpu.Reset();
+	JunctionCount = 0u;
+	TotalJunctionIncidents = 0u;
 
-	SegmentCount = static_cast<uint32>(SegmentStates.Num());
-	SegmentCellBaseCpu.Reset();
-	SegmentCellCountCpu.Reset();
-	SegmentUintTableCpu.Reset();
-	InteriorWorkPackedCpu.Reset();
-	SourceBoundaryWorkPackedCpu.Reset();
-	PressureConsumerBoundaryWorkPackedCpu.Reset();
-	TotalCellsGlobal = 0u;
-	TotalInteriorCells = 0u;
-	SourceBoundaryCount = 0u;
-	PressureConsumerBoundaryCount = 0u;
-
-	if (SegmentCount == 0u)
-	{
-		return;
-	}
-
-	uint32 RunningCellBase = 0u;
+	TMap<int32, TArray<TPair<int32, bool>>> JunctionSceneNodeKeyToIncidentEndpoints;
 	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
 	{
 		const FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
-		const int32 CellCount = SegmentState.CellStates.Num();
-		SegmentCellBaseCpu.Add(RunningCellBase);
-		SegmentCellCountCpu.Add(static_cast<uint32>(CellCount));
-		if (CellCount >= 2)
+		if (SegmentState.CellStates.Num() < 2)
 		{
-			TotalInteriorCells += static_cast<uint32>(CellCount - 2);
+			continue;
 		}
-		RunningCellBase += static_cast<uint32>(FMath::Max(CellCount, 0));
+		if (SegmentState.LeftSceneNodeKey != INDEX_NONE)
+		{
+			JunctionSceneNodeKeyToIncidentEndpoints.FindOrAdd(SegmentState.LeftSceneNodeKey).Add(TPair<int32, bool>(SegmentIndex, true));
+		}
+		if (SegmentState.RightSceneNodeKey != INDEX_NONE)
+		{
+			JunctionSceneNodeKeyToIncidentEndpoints.FindOrAdd(SegmentState.RightSceneNodeKey).Add(TPair<int32, bool>(SegmentIndex, false));
+		}
 	}
-	TotalCellsGlobal = RunningCellBase;
 
-	SegmentUintTableCpu.SetNumZeroed(static_cast<int32>(SegmentCount * FluidSegment1DGpuFieldIndex::UIntsPerSegment));
+	uint32 IncidentStart = 0u;
+	uint32 JunctionIndex = 0u;
+	for (const TPair<int32, TArray<TPair<int32, bool>>>& JunctionEntry : JunctionSceneNodeKeyToIncidentEndpoints)
+	{
+		const TArray<TPair<int32, bool>>& IncidentEndpoints = JunctionEntry.Value;
+		if (IncidentEndpoints.Num() < 2)
+		{
+			continue;
+		}
+		JunctionHeadersPackedCpu.Add(IncidentStart);
+		JunctionHeadersPackedCpu.Add(static_cast<uint32>(IncidentEndpoints.Num()));
+		for (const TPair<int32, bool>& IncidentEndpoint : IncidentEndpoints)
+		{
+			JunctionIncidentsPackedCpu.Add(static_cast<uint32>(IncidentEndpoint.Key));
+			JunctionIncidentsPackedCpu.Add(IncidentEndpoint.Value ? 1u : 0u);
+			JunctionIncidentsPackedCpu.Add(JunctionIndex);
+		}
+		IncidentStart += static_cast<uint32>(IncidentEndpoints.Num());
+		++JunctionIndex;
+	}
+	JunctionCount = JunctionIndex;
+	TotalJunctionIncidents = IncidentStart;
+}
+
+void FFluidSegment1DGpuSimulation::BakeSegmentUintTableAtImport(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, float GravityAcceleration)
+{
+	const FVector GravityDirectionWorld = FVector::UpVector;
 
 	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
 	{
@@ -297,7 +373,20 @@ void FFluidSegment1DGpuSimulation::RebuildFromSegments(const TArray<FFluidSegmen
 		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::SafeDensity, SafeDensity);
 		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::FrictionResistance, FrictionResistance);
 		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::PressureCoefficient, PressureCoefficient);
-		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::GravitySourceTerm, 0.0f);
+
+		float GravityAxisComponent = 0.0f;
+		if (SegmentPipeActors.IsValidIndex(SegmentIndex))
+		{
+			const APipeFluidPipeActor* PipeActor = SegmentPipeActors[SegmentIndex].Get();
+			if (PipeActor)
+			{
+				const FVector PipeAxisDirectionWorld = PipeActor->GetActorForwardVector().GetSafeNormal();
+				GravityAxisComponent = FVector::DotProduct(GravityDirectionWorld, PipeAxisDirectionWorld);
+			}
+		}
+		const float GravityAccelerationAlongAxis = GravityAcceleration * GravityAxisComponent;
+		const float GravitySourceTerm = -CrossSectionArea * GravityAccelerationAlongAxis;
+		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::GravitySourceTerm, GravitySourceTerm);
 
 		APipeFluidBasePointActor* FirstEndpoint = nullptr;
 		APipeFluidBasePointActor* SecondEndpoint = nullptr;
@@ -431,6 +520,56 @@ void FFluidSegment1DGpuSimulation::RebuildFromSegments(const TArray<FFluidSegmen
 			PressureConsumerBoundaryWorkPackedCpu.Add(0u);
 		}
 	}
+}
+
+void FFluidSegment1DGpuSimulation::RebuildFromSegments(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors)
+{
+	RebuildFromSegments(SegmentStates, SegmentPipeActors, nullptr);
+}
+
+void FFluidSegment1DGpuSimulation::RebuildFromSegments(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, UWorld* SimulationWorld)
+{
+	ReleaseInternal();
+
+	SegmentCount = static_cast<uint32>(SegmentStates.Num());
+	SegmentCellBaseCpu.Reset();
+	SegmentCellCountCpu.Reset();
+	SegmentUintTableCpu.Reset();
+	InteriorWorkPackedCpu.Reset();
+	SourceBoundaryWorkPackedCpu.Reset();
+	PressureConsumerBoundaryWorkPackedCpu.Reset();
+	TotalCellsGlobal = 0u;
+	TotalInteriorCells = 0u;
+	SourceBoundaryCount = 0u;
+	PressureConsumerBoundaryCount = 0u;
+	bGpuStateResident = false;
+	bReadFromBufferA = true;
+
+	if (SegmentCount == 0u)
+	{
+		return;
+	}
+
+	uint32 RunningCellBase = 0u;
+	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	{
+		const FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+		const int32 CellCount = SegmentState.CellStates.Num();
+		SegmentCellBaseCpu.Add(RunningCellBase);
+		SegmentCellCountCpu.Add(static_cast<uint32>(CellCount));
+		if (CellCount >= 2)
+		{
+			TotalInteriorCells += static_cast<uint32>(CellCount - 2);
+		}
+		RunningCellBase += static_cast<uint32>(FMath::Max(CellCount, 0));
+	}
+	TotalCellsGlobal = RunningCellBase;
+
+	SegmentUintTableCpu.SetNumZeroed(static_cast<int32>(SegmentCount * FluidSegment1DGpuFieldIndex::UIntsPerSegment));
+
+	const float GravityAcceleration = SimulationWorld ? FMath::Abs(SimulationWorld->GetGravityZ()) : 980.0f;
+	BakeSegmentUintTableAtImport(SegmentStates, SegmentPipeActors, GravityAcceleration);
+	BuildJunctionGpuWorkLists(SegmentStates);
 
 	if (InteriorWorkPackedCpu.Num() == 0)
 	{
@@ -445,8 +584,28 @@ void FFluidSegment1DGpuSimulation::RebuildFromSegments(const TArray<FFluidSegmen
 		return;
 	}
 
+	TArray<float> InitialPressure;
+	TArray<float> InitialFlow;
+	InitialPressure.SetNumUninitialized(static_cast<int32>(TotalCellsGlobal));
+	InitialFlow.SetNumUninitialized(static_cast<int32>(TotalCellsGlobal));
+	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	{
+		const FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+		const int32 CellCount = SegmentState.CellStates.Num();
+		const uint32 BaseIndex = SegmentCellBaseCpu[SegmentIndex];
+		for (int32 LocalIndex = 0; LocalIndex < CellCount; ++LocalIndex)
+		{
+			const int32 GlobalIndex = static_cast<int32>(BaseIndex) + LocalIndex;
+			InitialPressure[GlobalIndex] = SegmentState.CellStates[LocalIndex].Pressure;
+			InitialFlow[GlobalIndex] = SegmentState.CellStates[LocalIndex].FlowRate;
+		}
+	}
+
+	const uint32 SafeJunctionCount = FMath::Max(JunctionCount, 1u);
+	const uint32 SafeJunctionIncidentCount = FMath::Max(TotalJunctionIncidents, 1u);
+
 	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuAlloc)(
-		[this](FRHICommandListImmediate& ImmediateCommands)
+		[this, InitialPressure, InitialFlow, SafeJunctionCount, SafeJunctionIncidentCount](FRHICommandListImmediate& ImmediateCommands)
 		{
 			auto CreateStructuredSrvOnly = [&ImmediateCommands](FBufferRHIRef& OutBuffer, FShaderResourceViewRHIRef& OutSrv, const TCHAR* DebugName, const uint32 BytesPerElement, const uint32 NumElements, const void* InitialData)
 			{
@@ -492,233 +651,237 @@ void FFluidSegment1DGpuSimulation::RebuildFromSegments(const TArray<FFluidSegmen
 			CreateStructuredSrvOnly(InteriorWorkGpuBuffer, InteriorWorkGpuSrv, TEXT("FluidSegment1DInteriorWork"), sizeof(uint32), static_cast<uint32>(InteriorWorkPackedCpu.Num()), InteriorWorkPackedCpu.GetData());
 			CreateStructuredSrvOnly(SourceBoundaryWorkGpuBuffer, SourceBoundaryWorkGpuSrv, TEXT("FluidSegment1DSourceBoundaryWork"), sizeof(uint32), static_cast<uint32>(SourceBoundaryWorkPackedCpu.Num()), SourceBoundaryWorkPackedCpu.GetData());
 			CreateStructuredSrvOnly(PressureConsumerBoundaryWorkGpuBuffer, PressureConsumerBoundaryWorkGpuSrv, TEXT("FluidSegment1DPressureConsumerBoundaryWork"), sizeof(uint32), static_cast<uint32>(PressureConsumerBoundaryWorkPackedCpu.Num()), PressureConsumerBoundaryWorkPackedCpu.GetData());
+			CreateStructuredSrvOnly(JunctionHeadersGpuBuffer, JunctionHeadersGpuSrv, TEXT("FluidSegment1DJunctionHeaders"), sizeof(uint32), SafeJunctionCount * 2u, JunctionHeadersPackedCpu.GetData());
+			CreateStructuredSrvOnly(JunctionIncidentsGpuBuffer, JunctionIncidentsGpuSrv, TEXT("FluidSegment1DJunctionIncidents"), sizeof(uint32), SafeJunctionIncidentCount * 3u, JunctionIncidentsPackedCpu.GetData());
+			CreateStructuredSrvUav(JunctionPressureGpuBuffer, JunctionPressureGpuSrv, JunctionPressureGpuUav, TEXT("FluidSegment1DJunctionPressure"), FloatStride, SafeJunctionCount, nullptr);
 
-			CreateStructuredSrvUav(PressureGpuBufferA, PressureGpuBufferASrv, PressureGpuBufferAUav, TEXT("FluidSegment1DPressureA"), FloatStride, TotalCellsGlobal, nullptr);
+			CreateStructuredSrvUav(PressureGpuBufferA, PressureGpuBufferASrv, PressureGpuBufferAUav, TEXT("FluidSegment1DPressureA"), FloatStride, TotalCellsGlobal, InitialPressure.GetData());
 			CreateStructuredSrvUav(PressureGpuBufferB, PressureGpuBufferBSrv, PressureGpuBufferBUav, TEXT("FluidSegment1DPressureB"), FloatStride, TotalCellsGlobal, nullptr);
-			CreateStructuredSrvUav(FlowGpuBufferA, FlowGpuBufferASrv, FlowGpuBufferAUav, TEXT("FluidSegment1DFlowA"), FloatStride, TotalCellsGlobal, nullptr);
+			CreateStructuredSrvUav(FlowGpuBufferA, FlowGpuBufferASrv, FlowGpuBufferAUav, TEXT("FluidSegment1DFlowA"), FloatStride, TotalCellsGlobal, InitialFlow.GetData());
 			CreateStructuredSrvUav(FlowGpuBufferB, FlowGpuBufferBSrv, FlowGpuBufferBUav, TEXT("FluidSegment1DFlowB"), FloatStride, TotalCellsGlobal, nullptr);
 		});
 	FlushRenderingCommands();
 	GpuPressureReadback = MakeUnique<FRHIGPUBufferReadback>(TEXT("FluidSegment1DPressureReadback"));
 	GpuFlowReadback = MakeUnique<FRHIGPUBufferReadback>(TEXT("FluidSegment1DFlowReadback"));
 	bResourcesAllocated = true;
+	bGpuStateResident = true;
+	bReadFromBufferA = true;
+}
+
+void FFluidSegment1DGpuSimulation::DispatchGpuSimulationStep(FRHICommandListImmediate& ImmediateCommands, float SimulationStepTime, bool bReadFromA)
+{
+	FShaderResourceViewRHIRef CurrentPressureSrv = bReadFromA ? PressureGpuBufferASrv : PressureGpuBufferBSrv;
+	FShaderResourceViewRHIRef CurrentFlowSrv = bReadFromA ? FlowGpuBufferASrv : FlowGpuBufferBSrv;
+	FShaderResourceViewRHIRef NextPressureSrv = bReadFromA ? PressureGpuBufferBSrv : PressureGpuBufferASrv;
+	FShaderResourceViewRHIRef NextFlowSrv = bReadFromA ? FlowGpuBufferBSrv : FlowGpuBufferASrv;
+	FUnorderedAccessViewRHIRef NextPressureUav = bReadFromA ? PressureGpuBufferBUav : PressureGpuBufferAUav;
+	FUnorderedAccessViewRHIRef NextFlowUav = bReadFromA ? FlowGpuBufferBUav : FlowGpuBufferAUav;
+
+	FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
+
+	{
+		FFluidSegment1DCopyCS::FParameters PassParameters;
+		PassParameters.TotalCells = TotalCellsGlobal;
+		PassParameters.CurrentPressure = CurrentPressureSrv;
+		PassParameters.CurrentFlow = CurrentFlowSrv;
+		PassParameters.NextPressure = NextPressureUav;
+		PassParameters.NextFlow = NextFlowUav;
+		TShaderMapRef<FFluidSegment1DCopyCS> ComputeShader(GlobalShaderMap);
+		FComputeShaderUtils::Dispatch(ImmediateCommands, ComputeShader, PassParameters, FIntVector(FMath::DivideAndRoundUp(static_cast<int32>(TotalCellsGlobal), static_cast<int32>(FFluidSegment1DCopyCS::ThreadGroupSize)), 1, 1));
+	}
+
+	{
+		FFluidSegment1DInteriorCS::FParameters PassParameters;
+		PassParameters.TotalInteriorCells = TotalInteriorCells;
+		PassParameters.SimulationStepTime = SimulationStepTime;
+		PassParameters.SegmentUintTable = SegmentUintGpuSrv;
+		PassParameters.InteriorWorkPacked = InteriorWorkGpuSrv;
+		PassParameters.CurrentPressure = CurrentPressureSrv;
+		PassParameters.CurrentFlow = CurrentFlowSrv;
+		PassParameters.NextPressure = NextPressureUav;
+		PassParameters.NextFlow = NextFlowUav;
+		TShaderMapRef<FFluidSegment1DInteriorCS> ComputeShader(GlobalShaderMap);
+		const int32 InteriorGroups = TotalInteriorCells > 0u ? FMath::DivideAndRoundUp(static_cast<int32>(TotalInteriorCells), static_cast<int32>(FFluidSegment1DInteriorCS::ThreadGroupSize)) : 0;
+		if (InteriorGroups > 0)
+		{
+			FComputeShaderUtils::Dispatch(ImmediateCommands, ComputeShader, PassParameters, FIntVector(InteriorGroups, 1, 1));
+		}
+	}
+
+	{
+		FFluidSegment1DBoundaryGeneralCS::FParameters PassParameters;
+		PassParameters.SegmentCount = SegmentCount;
+		PassParameters.SegmentUintTable = SegmentUintGpuSrv;
+		PassParameters.NextPressure = NextPressureUav;
+		PassParameters.NextFlow = NextFlowUav;
+		TShaderMapRef<FFluidSegment1DBoundaryGeneralCS> ComputeShader(GlobalShaderMap);
+		const int32 BoundaryGroups = FMath::DivideAndRoundUp(static_cast<int32>(SegmentCount * 2u), static_cast<int32>(FFluidSegment1DBoundaryGeneralCS::ThreadGroupSize));
+		FComputeShaderUtils::Dispatch(ImmediateCommands, ComputeShader, PassParameters, FIntVector(BoundaryGroups, 1, 1));
+	}
+
+	if (SourceBoundaryCount > 0u)
+	{
+		FFluidSegment1DBoundarySourceCS::FParameters PassParameters;
+		PassParameters.SourceBoundaryCount = SourceBoundaryCount;
+		PassParameters.SegmentUintTable = SegmentUintGpuSrv;
+		PassParameters.BoundarySourceWorkPacked = SourceBoundaryWorkGpuSrv;
+		PassParameters.NextPressure = NextPressureUav;
+		PassParameters.NextFlow = NextFlowUav;
+		TShaderMapRef<FFluidSegment1DBoundarySourceCS> ComputeShader(GlobalShaderMap);
+		FComputeShaderUtils::Dispatch(ImmediateCommands, ComputeShader, PassParameters, FIntVector(FMath::DivideAndRoundUp(static_cast<int32>(SourceBoundaryCount), static_cast<int32>(FFluidSegment1DBoundarySourceCS::ThreadGroupSize)), 1, 1));
+	}
+
+	if (PressureConsumerBoundaryCount > 0u)
+	{
+		FFluidSegment1DBoundaryPressureConsumerCS::FParameters PassParameters;
+		PassParameters.PressureConsumerBoundaryCount = PressureConsumerBoundaryCount;
+		PassParameters.SegmentUintTable = SegmentUintGpuSrv;
+		PassParameters.BoundaryPressureConsumerWorkPacked = PressureConsumerBoundaryWorkGpuSrv;
+		PassParameters.NextPressure = NextPressureUav;
+		PassParameters.NextFlow = NextFlowUav;
+		TShaderMapRef<FFluidSegment1DBoundaryPressureConsumerCS> ComputeShader(GlobalShaderMap);
+		FComputeShaderUtils::Dispatch(ImmediateCommands, ComputeShader, PassParameters, FIntVector(FMath::DivideAndRoundUp(static_cast<int32>(PressureConsumerBoundaryCount), static_cast<int32>(FFluidSegment1DBoundaryPressureConsumerCS::ThreadGroupSize)), 1, 1));
+	}
+
+	if (JunctionCount > 0u)
+	{
+		FFluidSegment1DJunctionReduceCS::FParameters ReduceParameters;
+		ReduceParameters.JunctionCount = JunctionCount;
+		ReduceParameters.SegmentUintTable = SegmentUintGpuSrv;
+		ReduceParameters.JunctionHeadersPacked = JunctionHeadersGpuSrv;
+		ReduceParameters.JunctionIncidentsPacked = JunctionIncidentsGpuSrv;
+		ReduceParameters.NextPressure = NextPressureSrv;
+		ReduceParameters.JunctionPressureOut = JunctionPressureGpuUav;
+		TShaderMapRef<FFluidSegment1DJunctionReduceCS> ReduceShader(GlobalShaderMap);
+		FComputeShaderUtils::Dispatch(ImmediateCommands, ReduceShader, ReduceParameters, FIntVector(FMath::DivideAndRoundUp(static_cast<int32>(JunctionCount), static_cast<int32>(FFluidSegment1DJunctionReduceCS::ThreadGroupSize)), 1, 1));
+
+		FFluidSegment1DJunctionApplyCS::FParameters ApplyParameters;
+		ApplyParameters.TotalJunctionIncidents = TotalJunctionIncidents;
+		ApplyParameters.SegmentUintTable = SegmentUintGpuSrv;
+		ApplyParameters.JunctionIncidentsPacked = JunctionIncidentsGpuSrv;
+		ApplyParameters.JunctionPressureOut = JunctionPressureGpuSrv;
+		ApplyParameters.NextPressure = NextPressureUav;
+		ApplyParameters.NextFlow = NextFlowUav;
+		TShaderMapRef<FFluidSegment1DJunctionApplyCS> ApplyShader(GlobalShaderMap);
+		FComputeShaderUtils::Dispatch(ImmediateCommands, ApplyShader, ApplyParameters, FIntVector(FMath::DivideAndRoundUp(static_cast<int32>(TotalJunctionIncidents), static_cast<int32>(FFluidSegment1DJunctionApplyCS::ThreadGroupSize)), 1, 1));
+	}
+
+}
+
+void FFluidSegment1DGpuSimulation::SimulateStepGpuOnly(float SimulationStepTime)
+{
+	if (!bResourcesAllocated || !bGpuStateResident || TotalCellsGlobal == 0u || !IsAvailable())
+	{
+		return;
+	}
+
+	const bool bReadFromA = bReadFromBufferA;
+	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuStepGpuOnly)(
+		[this, SimulationStepTime, bReadFromA](FRHICommandListImmediate& ImmediateCommands)
+		{
+			DispatchGpuSimulationStep(ImmediateCommands, SimulationStepTime, bReadFromA);
+		});
+	bReadFromBufferA = !bReadFromA;
 }
 
 void FFluidSegment1DGpuSimulation::SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, const float SimulationStepTime, const bool bWaitForReadbackBeforeLock)
 {
-	if (!bResourcesAllocated || TotalCellsGlobal == 0u || !IsAvailable())
+	SimulateStepGpuOnly(SimulationStepTime);
+	if (bWaitForReadbackBeforeLock)
+	{
+		ReadbackToSegmentStates(SegmentStates, true);
+	}
+}
+
+void FFluidSegment1DGpuSimulation::ReadbackToSegmentStates(TArray<FFluidSegmentStateOneD>& SegmentStates, bool bWaitForCompletion)
+{
+	if (!bResourcesAllocated || !bGpuStateResident || TotalCellsGlobal == 0u || !GpuPressureReadback || !GpuFlowReadback)
 	{
 		return;
 	}
 
-	const float GravityAcceleration = World ? FMath::Abs(World->GetGravityZ()) : 980.0f;
-	const FVector GravityDirectionWorld = FVector::UpVector;
+	const uint32 ReadBytes = TotalCellsGlobal * sizeof(float);
+	FBufferRHIRef LatestPressureBuffer = bReadFromBufferA ? PressureGpuBufferA : PressureGpuBufferB;
+	FBufferRHIRef LatestFlowBuffer = bReadFromBufferA ? FlowGpuBufferA : FlowGpuBufferB;
 
-	TArray<float> PressureScratch;
-	TArray<float> FlowScratch;
-	PressureScratch.SetNumUninitialized(static_cast<int32>(TotalCellsGlobal));
-	FlowScratch.SetNumUninitialized(static_cast<int32>(TotalCellsGlobal));
+	TArray<float> PressureMirror;
+	TArray<float> FlowMirror;
+	PressureMirror.SetNumUninitialized(static_cast<int32>(TotalCellsGlobal));
+	FlowMirror.SetNumUninitialized(static_cast<int32>(TotalCellsGlobal));
 
-	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
-	{
-		const FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
-		const int32 CellCount = SegmentState.CellStates.Num();
-		const uint32 BaseIndex = SegmentCellBaseCpu[SegmentIndex];
-		for (int32 LocalIndex = 0; LocalIndex < CellCount; ++LocalIndex)
+	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuDebugReadbackEnqueue)(
+		[this, LatestPressureBuffer, LatestFlowBuffer, ReadBytes](FRHICommandListImmediate& ImmediateCommands)
 		{
-			const int32 GlobalIndex = static_cast<int32>(BaseIndex) + LocalIndex;
-			PressureScratch[GlobalIndex] = SegmentState.CellStates[LocalIndex].Pressure;
-			FlowScratch[GlobalIndex] = SegmentState.CellStates[LocalIndex].FlowRate;
-		}
-
-		float GravityAxisComponent = 0.0f;
-		if (SegmentPipeActors.IsValidIndex(SegmentIndex))
-		{
-			const APipeFluidPipeActor* PipeActor = SegmentPipeActors[SegmentIndex].Get();
-			if (PipeActor)
-			{
-				const FVector PipeAxisDirectionWorld = PipeActor->GetActorForwardVector().GetSafeNormal();
-				GravityAxisComponent = FVector::DotProduct(GravityDirectionWorld, PipeAxisDirectionWorld);
-			}
-		}
-		const float GravityAccelerationAlongAxis = GravityAcceleration * GravityAxisComponent;
-		const float CrossSectionArea = FluidSegment1DComputeCrossSectionArea(SegmentState);
-		const float GravitySourceTerm = -CrossSectionArea * GravityAccelerationAlongAxis;
-		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::GravitySourceTerm, GravitySourceTerm);
-	}
-
-	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
-	{
-		FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
-		if (SegmentState.CellStates.Num() < 2)
-		{
-			continue;
-		}
-		if (!SegmentPipeActors.IsValidIndex(SegmentIndex))
-		{
-			continue;
-		}
-		APipeFluidPipeActor* PipeActor = SegmentPipeActors[SegmentIndex].Get();
-		if (!PipeActor)
-		{
-			continue;
-		}
-		if (SegmentState.LeftBoundaryConditionType == EFluidBoundaryConditionTypeOneD::FixedFlow)
-		{
-			if (APipeFluidBasePointActor* FirstEndpoint = PipeActor->PipeEndpointFirst)
-			{
-				if (FirstEndpoint->SceneNodeKey == SegmentState.LeftSceneNodeKey)
-				{
-					const float BoundaryAdjacentCellGaugePressure = SegmentState.CellStates[0].Pressure;
-					SegmentState.LeftBoundaryFlow = FirstEndpoint->ComputeRuntimeSignedVolumeFlowRateForOneDimensionPipeBoundary(true, BoundaryAdjacentCellGaugePressure);
-				}
-			}
-		}
-		if (SegmentState.RightBoundaryConditionType == EFluidBoundaryConditionTypeOneD::FixedFlow)
-		{
-			const int32 LastBoundaryCellIndex = SegmentState.CellStates.Num() - 1;
-			if (APipeFluidBasePointActor* SecondEndpoint = PipeActor->PipeEndpointSecond)
-			{
-				if (SecondEndpoint->SceneNodeKey == SegmentState.RightSceneNodeKey)
-				{
-					const float BoundaryAdjacentCellGaugePressure = SegmentState.CellStates[LastBoundaryCellIndex].Pressure;
-					SegmentState.RightBoundaryFlow = SecondEndpoint->ComputeRuntimeSignedVolumeFlowRateForOneDimensionPipeBoundary(false, BoundaryAdjacentCellGaugePressure);
-				}
-			}
-		}
-		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::LeftBoundaryFlowUpload, SegmentState.LeftBoundaryFlow);
-		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::RightBoundaryFlowUpload, SegmentState.RightBoundaryFlow);
-		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::LeftBoundaryPressure, SegmentState.LeftBoundaryPressure);
-		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::RightBoundaryPressure, SegmentState.RightBoundaryPressure);
-	}
-
-	if (!GpuPressureReadback || !GpuFlowReadback)
-	{
-		return;
-	}
-
-	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuStep)(
-		[this, PressureScratch, FlowScratch, SimulationStepTime](FRHICommandListImmediate& ImmediateCommands)
-		{
-			const uint32 SegmentTableBytes = SegmentUintTableCpu.Num() * sizeof(uint32);
-			void* SegmentLock = ImmediateCommands.LockBuffer(SegmentUintGpuBuffer, 0, SegmentTableBytes, RLM_WriteOnly);
-			FMemory::Memcpy(SegmentLock, SegmentUintTableCpu.GetData(), SegmentTableBytes);
-			ImmediateCommands.UnlockBuffer(SegmentUintGpuBuffer);
-
-			const uint32 PressureBytes = TotalCellsGlobal * sizeof(float);
-			void* PressureLockA = ImmediateCommands.LockBuffer(PressureGpuBufferA, 0, PressureBytes, RLM_WriteOnly);
-			FMemory::Memcpy(PressureLockA, PressureScratch.GetData(), PressureBytes);
-			ImmediateCommands.UnlockBuffer(PressureGpuBufferA);
-
-			void* FlowLockA = ImmediateCommands.LockBuffer(FlowGpuBufferA, 0, PressureBytes, RLM_WriteOnly);
-			FMemory::Memcpy(FlowLockA, FlowScratch.GetData(), PressureBytes);
-			ImmediateCommands.UnlockBuffer(FlowGpuBufferA);
-
-			FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-
-			{
-				FFluidSegment1DCopyCS::FParameters PassParameters;
-				PassParameters.TotalCells = TotalCellsGlobal;
-				PassParameters.CurrentPressure = PressureGpuBufferASrv;
-				PassParameters.CurrentFlow = FlowGpuBufferASrv;
-				PassParameters.NextPressure = PressureGpuBufferBUav;
-				PassParameters.NextFlow = FlowGpuBufferBUav;
-				TShaderMapRef<FFluidSegment1DCopyCS> ComputeShader(GlobalShaderMap);
-				FComputeShaderUtils::Dispatch(ImmediateCommands, ComputeShader, PassParameters, FIntVector(FMath::DivideAndRoundUp(static_cast<int32>(TotalCellsGlobal), static_cast<int32>(FFluidSegment1DCopyCS::ThreadGroupSize)), 1, 1));
-			}
-
-			{
-				FFluidSegment1DInteriorCS::FParameters PassParameters;
-				PassParameters.TotalInteriorCells = TotalInteriorCells;
-				PassParameters.SimulationStepTime = SimulationStepTime;
-				PassParameters.SegmentUintTable = SegmentUintGpuSrv;
-				PassParameters.InteriorWorkPacked = InteriorWorkGpuSrv;
-				PassParameters.CurrentPressure = PressureGpuBufferASrv;
-				PassParameters.CurrentFlow = FlowGpuBufferASrv;
-				PassParameters.NextPressure = PressureGpuBufferBUav;
-				PassParameters.NextFlow = FlowGpuBufferBUav;
-				TShaderMapRef<FFluidSegment1DInteriorCS> ComputeShader(GlobalShaderMap);
-				const int32 InteriorGroups = TotalInteriorCells > 0u ? FMath::DivideAndRoundUp(static_cast<int32>(TotalInteriorCells), static_cast<int32>(FFluidSegment1DInteriorCS::ThreadGroupSize)) : 0;
-				if (InteriorGroups > 0)
-				{
-					FComputeShaderUtils::Dispatch(ImmediateCommands, ComputeShader, PassParameters, FIntVector(InteriorGroups, 1, 1));
-				}
-			}
-
-			{
-				FFluidSegment1DBoundaryGeneralCS::FParameters PassParameters;
-				PassParameters.SegmentCount = SegmentCount;
-				PassParameters.SegmentUintTable = SegmentUintGpuSrv;
-				PassParameters.NextPressure = PressureGpuBufferBUav;
-				PassParameters.NextFlow = FlowGpuBufferBUav;
-				TShaderMapRef<FFluidSegment1DBoundaryGeneralCS> ComputeShader(GlobalShaderMap);
-				const int32 BoundaryGroups = FMath::DivideAndRoundUp(static_cast<int32>(SegmentCount * 2u), static_cast<int32>(FFluidSegment1DBoundaryGeneralCS::ThreadGroupSize));
-				FComputeShaderUtils::Dispatch(ImmediateCommands, ComputeShader, PassParameters, FIntVector(BoundaryGroups, 1, 1));
-			}
-
-			if (SourceBoundaryCount > 0u)
-			{
-				FFluidSegment1DBoundarySourceCS::FParameters PassParameters;
-				PassParameters.SourceBoundaryCount = SourceBoundaryCount;
-				PassParameters.SegmentUintTable = SegmentUintGpuSrv;
-				PassParameters.BoundarySourceWorkPacked = SourceBoundaryWorkGpuSrv;
-				PassParameters.NextPressure = PressureGpuBufferBUav;
-				PassParameters.NextFlow = FlowGpuBufferBUav;
-				TShaderMapRef<FFluidSegment1DBoundarySourceCS> ComputeShader(GlobalShaderMap);
-				FComputeShaderUtils::Dispatch(ImmediateCommands, ComputeShader, PassParameters, FIntVector(FMath::DivideAndRoundUp(static_cast<int32>(SourceBoundaryCount), static_cast<int32>(FFluidSegment1DBoundarySourceCS::ThreadGroupSize)), 1, 1));
-			}
-
-			if (PressureConsumerBoundaryCount > 0u)
-			{
-				FFluidSegment1DBoundaryPressureConsumerCS::FParameters PassParameters;
-				PassParameters.PressureConsumerBoundaryCount = PressureConsumerBoundaryCount;
-				PassParameters.SegmentUintTable = SegmentUintGpuSrv;
-				PassParameters.BoundaryPressureConsumerWorkPacked = PressureConsumerBoundaryWorkGpuSrv;
-				PassParameters.NextPressure = PressureGpuBufferBUav;
-				PassParameters.NextFlow = FlowGpuBufferBUav;
-				TShaderMapRef<FFluidSegment1DBoundaryPressureConsumerCS> ComputeShader(GlobalShaderMap);
-				FComputeShaderUtils::Dispatch(ImmediateCommands, ComputeShader, PassParameters, FIntVector(FMath::DivideAndRoundUp(static_cast<int32>(PressureConsumerBoundaryCount), static_cast<int32>(FFluidSegment1DBoundaryPressureConsumerCS::ThreadGroupSize)), 1, 1));
-			}
-
-			GpuPressureReadback->EnqueueCopy(ImmediateCommands, PressureGpuBufferB, PressureBytes);
-			GpuFlowReadback->EnqueueCopy(ImmediateCommands, FlowGpuBufferB, PressureBytes);
+			ImmediateCommands.ImmediateFlush(EImmediateFlushType::FlushRHIThread);
+			GpuPressureReadback->EnqueueCopy(ImmediateCommands, LatestPressureBuffer, ReadBytes);
+			GpuFlowReadback->EnqueueCopy(ImmediateCommands, LatestFlowBuffer, ReadBytes);
+			ImmediateCommands.ImmediateFlush(EImmediateFlushType::FlushRHIThread);
 		});
 	FlushRenderingCommands();
-	const uint32 ReadBytes = TotalCellsGlobal * sizeof(float);
-	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuReadbackLock)(
-		[this, &PressureScratch, &FlowScratch, ReadBytes, bWaitForReadbackBeforeLock](FRHICommandListImmediate& ImmediateCommands)
+
+	if (bWaitForCompletion)
+	{
+		const double WaitStartSeconds = FPlatformTime::Seconds();
+		const double WaitTimeoutSeconds = 5.0;
+		while (!GpuPressureReadback->IsReady() || !GpuFlowReadback->IsReady())
 		{
-			if (bWaitForReadbackBeforeLock)
-			{
-				GpuPressureReadback->Wait(ImmediateCommands, FRHIGPUMask::All());
-				GpuFlowReadback->Wait(ImmediateCommands, FRHIGPUMask::All());
-			}
-			else if (!GpuPressureReadback->IsReady() || !GpuFlowReadback->IsReady())
+			if (FPlatformTime::Seconds() - WaitStartSeconds > WaitTimeoutSeconds)
 			{
 				return;
 			}
+			FPlatformProcess::Sleep(0.0f);
+		}
+	}
+	else if (!GpuPressureReadback->IsReady() || !GpuFlowReadback->IsReady())
+	{
+		return;
+	}
+
+	bool bReadbackCopySucceeded = false;
+	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuDebugReadbackLock)(
+		[this, ReadBytes, &PressureMirror, &FlowMirror, &bReadbackCopySucceeded](FRHICommandListImmediate& ImmediateCommands)
+		{
 			void* PressureRead = GpuPressureReadback->Lock(ReadBytes);
 			void* FlowRead = GpuFlowReadback->Lock(ReadBytes);
 			if (PressureRead && FlowRead)
 			{
-				FMemory::Memcpy(PressureScratch.GetData(), PressureRead, ReadBytes);
-				FMemory::Memcpy(FlowScratch.GetData(), FlowRead, ReadBytes);
+				FMemory::Memcpy(PressureMirror.GetData(), PressureRead, ReadBytes);
+				FMemory::Memcpy(FlowMirror.GetData(), FlowRead, ReadBytes);
+				bReadbackCopySucceeded = true;
 			}
 			GpuPressureReadback->Unlock();
 			GpuFlowReadback->Unlock();
 		});
 	FlushRenderingCommands();
 
+	if (!bReadbackCopySucceeded)
+	{
+		return;
+	}
+
 	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
 	{
 		FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
-		const int32 CellCount = SegmentState.CellStates.Num();
+		if (!SegmentCellBaseCpu.IsValidIndex(SegmentIndex) || !SegmentCellCountCpu.IsValidIndex(SegmentIndex))
+		{
+			continue;
+		}
+		const int32 CellCount = static_cast<int32>(SegmentCellCountCpu[SegmentIndex]);
+		if (SegmentState.CellStates.Num() != CellCount)
+		{
+			continue;
+		}
 		const uint32 BaseIndex = SegmentCellBaseCpu[SegmentIndex];
 		for (int32 LocalIndex = 0; LocalIndex < CellCount; ++LocalIndex)
 		{
 			const int32 GlobalIndex = static_cast<int32>(BaseIndex) + LocalIndex;
-			SegmentState.CellStates[LocalIndex].Pressure = PressureScratch[GlobalIndex];
-			SegmentState.CellStates[LocalIndex].FlowRate = FlowScratch[GlobalIndex];
+			SegmentState.CellStates[LocalIndex].Pressure = PressureMirror[GlobalIndex];
+			SegmentState.CellStates[LocalIndex].FlowRate = FlowMirror[GlobalIndex];
+		}
+		const float CrossSectionArea = FluidSegment1DComputeCrossSectionArea(SegmentState);
+		for (FFluidSegmentCellStateOneD& CellState : SegmentState.CellStates)
+		{
+			CellState.Velocity = CellState.FlowRate / FMath::Max(CrossSectionArea, KINDA_SMALL_NUMBER);
 		}
 	}
 }
