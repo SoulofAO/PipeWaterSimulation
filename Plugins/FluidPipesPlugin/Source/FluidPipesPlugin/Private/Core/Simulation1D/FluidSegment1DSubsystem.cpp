@@ -4,33 +4,12 @@
 #include "Core/Actors/PipeFluidPipeActor.h"
 #include "Core/Simulation1D/FluidSegment1DCPUSimulation.h"
 #include "Core/Simulation1D/FluidSegment1DGpuSimulation.h"
+#include "Core/Simulation1D/FluidSegment1DSimulationLibrary.h"
 #include "DrawDebugHelpers.h"
 #include "FluidPipesDrawDebug.h"
 #include "FluidPipesWorldDebugText.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
-
-static float FluidOneDPressureSampleNearBoundaryForJunctionCoupling(const TArray<FFluidSegmentCellStateOneD>& CellStates, bool bLeftEndpoint)
-{
-	const int32 CellCount = CellStates.Num();
-	if (CellCount < 2)
-	{
-		return 0.0f;
-	}
-	if (bLeftEndpoint)
-	{
-		if (CellCount >= 3)
-		{
-			return 0.5f * (CellStates[1].Pressure + CellStates[2].Pressure);
-		}
-		return CellStates[1].Pressure;
-	}
-	if (CellCount >= 3)
-	{
-		return 0.5f * (CellStates[CellCount - 2].Pressure + CellStates[CellCount - 3].Pressure);
-	}
-	return CellStates[CellCount - 2].Pressure;
-}
 
 void UFluidSegment1DSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -183,7 +162,7 @@ void UFluidSegment1DSubsystem::ApplyJunctionCouplingToNextSegmentStates(const TA
 			{
 				continue;
 			}
-			const float BranchPressureNearJunction = FluidOneDPressureSampleNearBoundaryForJunctionCoupling(NextSegmentState.CellStates, IncidentEndpoint.bLeftEndpoint);
+			const float BranchPressureNearJunction = FFluidSegment1DSimulationLibrary::PressureSampleNearBoundaryForJunctionCoupling(NextSegmentState.CellStates, IncidentEndpoint.bLeftEndpoint);
 			SimplePressureSum += BranchPressureNearJunction;
 			SimplePressureContributorCount += 1;
 
