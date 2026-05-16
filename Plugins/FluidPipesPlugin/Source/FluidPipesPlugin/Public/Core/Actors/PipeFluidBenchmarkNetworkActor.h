@@ -34,10 +34,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidBenchmark|Classes")
 	TSubclassOf<APipeFluidPipeActor> PipeActorClass;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidBenchmark", meta = (ClampMin = "2", UIMin = "2"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidBenchmark", meta = (ClampMin = "1", UIMin = "1"))
 	int32 GridSizeX = 16;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidBenchmark", meta = (ClampMin = "2", UIMin = "2"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidBenchmark", meta = (ClampMin = "1", UIMin = "1"))
 	int32 GridSizeY = 16;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidBenchmark", meta = (ClampMin = "100.0", UIMin = "100.0"))
@@ -64,11 +64,13 @@ public:
 	UFUNCTION(CallInEditor, Category = "FluidBenchmark")
 	void ClearBenchmarkNetwork();
 
+	FString BuildNetworkDescription() const;
+
 private:
 	void SpawnBenchmarkPoints(TArray<APipeFluidBasePointActor*>& SpawnedPoints);
 	void SpawnBenchmarkPipes(const TArray<APipeFluidBasePointActor*>& SpawnedPoints);
 	FVector BuildPointLocation(int32 PointIndexX, int32 PointIndexY) const;
-	int32 BuildPointArrayIndex(int32 PointIndexX, int32 PointIndexY, int32 SafeGridSizeY) const;
+	int32 BuildPointArrayIndex(int32 PointIndexX, int32 PointIndexY, int32 BenchmarkGridSizeY) const;
 
 	UPROPERTY()
 	TArray<TObjectPtr<AActor>> SpawnedBenchmarkActors;

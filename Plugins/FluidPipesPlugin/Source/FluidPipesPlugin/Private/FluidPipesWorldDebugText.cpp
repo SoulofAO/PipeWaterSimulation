@@ -7,6 +7,7 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "FluidPipesDrawDebug.h"
+#include "Other/FluidPipesSimulationSettingsLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 #include "SceneView.h"
 
@@ -77,9 +78,9 @@ static void FluidPipesWorldDebugTextDrawServiceCallback(UCanvas* Canvas, APlayer
 	}
 	LastDrawFrameForCanvas = GFrameCounter;
 
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
+	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(CanvasWorld);
 	const FSceneView* SceneView = Canvas->SceneView;
-	const float MaximumDistanceCentimeters = Settings->WorldDebugMaximumDrawDistanceCentimeters;
+	const float MaximumDistanceCentimeters = Settings.WorldDebugMaximumDrawDistanceCentimeters;
 	const float MaximumDistanceSquared = MaximumDistanceCentimeters > KINDA_SMALL_NUMBER ? FMath::Square(MaximumDistanceCentimeters) : TNumericLimits<float>::Max();
 
 	UFont* RenderFont = GEngine ? GEngine->GetSmallFont() : nullptr;
@@ -119,12 +120,12 @@ static void FluidPipesWorldDebugTextDrawServiceCallback(UCanvas* Canvas, APlayer
 		const FVector3f ScreenLocation = UE::DebugDrawHelper::GetScaleAdjustedScreenLocation(Canvas, Row.WorldLocation);
 
 		float EffectiveFontScale = Row.FontScale;
-		if (Settings->WorldDebugPerspectiveFontScaling)
+		if (Settings.WorldDebugPerspectiveFontScaling)
 		{
 			const float DistanceCentimeters = FMath::Sqrt(FMath::Max(DistanceSquared, 25.0f));
-			const float ReferenceDistanceCentimeters = FMath::Max(Settings->WorldDebugPerspectiveFontReferenceDistanceCentimeters, 50.0f);
-			const float MinimumMultiplier = Settings->WorldDebugPerspectiveFontMinimumMultiplier;
-			const float MaximumMultiplier = FMath::Max(Settings->WorldDebugPerspectiveFontMaximumMultiplier, MinimumMultiplier + 0.01f);
+			const float ReferenceDistanceCentimeters = FMath::Max(Settings.WorldDebugPerspectiveFontReferenceDistanceCentimeters, 50.0f);
+			const float MinimumMultiplier = Settings.WorldDebugPerspectiveFontMinimumMultiplier;
+			const float MaximumMultiplier = FMath::Max(Settings.WorldDebugPerspectiveFontMaximumMultiplier, MinimumMultiplier + 0.01f);
 			const float InverseDistanceScale = ReferenceDistanceCentimeters / DistanceCentimeters;
 			const float FarFadeStartSquared = FMath::Square(ReferenceDistanceCentimeters * 2.5f);
 			const float FarFadeEndSquared = MaximumDistanceSquared;

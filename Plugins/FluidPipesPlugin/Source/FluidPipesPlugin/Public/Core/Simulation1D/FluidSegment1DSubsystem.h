@@ -3,7 +3,9 @@
 #include "CoreMinimal.h"
 #include "Core/Simulation1D/BaseFluidSegment1DSimulation.h"
 #include "Data/FluidData.h"
-#include "Other/LazyFluidPipesDeveloperSettings.h"
+#include "Other/FluidPipesSimulationSettingsTypes.h"
+
+class ULazyFluidPipesDeveloperSettings;
 #include "Subsystems/WorldSubsystem.h"
 #include "Templates/UniquePtr.h"
 #include "UObject/WeakObjectPtr.h"
@@ -31,6 +33,11 @@ public:
 	void ApplyImportedOneDSegments(const TArray<FFluidSegmentStateOneD>& Segments);
 
 	void ApplyImportedOneDSegments(const TArray<FFluidSegmentStateOneD>& Segments, const TArray<APipeFluidPipeActor*>& IncomingPipeActors);
+
+	UFUNCTION(BlueprintCallable, Category = "FluidOneD")
+	void RebuildActiveSimulationForCurrentSettings();
+
+	const ULazyFluidPipesDeveloperSettings& GetSimulationSettings() const;
 
 private:
 	struct FFluidOneDJunctionEndpointIncident

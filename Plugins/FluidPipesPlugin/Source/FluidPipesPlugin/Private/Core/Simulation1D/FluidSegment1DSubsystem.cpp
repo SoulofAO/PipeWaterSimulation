@@ -12,6 +12,8 @@
 #include "FluidPipesWorldDebugText.h"
 #include "HAL/PlatformTime.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Core/LazyFluidPipeSubsystem.h"
+#include "Other/FluidPipesSimulationSettingsLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 
 void UFluidSegment1DSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -31,12 +33,14 @@ void UFluidSegment1DSubsystem::Deinitialize()
 
 void UFluidSegment1DSubsystem::Tick(float DeltaTime)
 {
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	const bool bEnableFluidSegmentSimulationOneD = Settings->EnableFluidSegmentSimulationOneD;
+	const ULazyFluidPipesDeveloperSettings& Settings = GetSimulationSettings();
+	const bool bEnableFluidSegmentSimulationOneD = Settings.EnableFluidSegmentSimulationOneD;
 	if (bEnableFluidSegmentSimulationOneD)
 	{
 		const bool bPrintSimulationFrameTiming = FluidPipesShouldPrintSimulationFrameTiming();
-		const double FrameStartSeconds = bPrintSimulationFrameTiming ? FPlatformTime::Seconds() : 0.0;
+		ULazyFluidPipeSubsystem* FluidPipeSubsystem = GetWorld() ? GetWorld()->GetSubsystem<ULazyFluidPipeSubsystem>() : nullptr;
+		const bool bRecordBenchmarkFrameStats = FluidPipeSubsystem && FluidPipeSubsystem->IsBenchmarkFrameStatsRecordingEnabled();
+		const double FrameStartSeconds = (bPrintSimulationFrameTiming || bRecordBenchmarkFrameStats) ? FPlatformTime::Seconds() : 0.0;
 		int32 SimulationStepCount = 0;
 
 		const int32 OneDWorldDebugDetailLevel = FluidPipesGetOneDWorldDebugDetailLevel();
@@ -46,11 +50,16 @@ void UFluidSegment1DSubsystem::Tick(float DeltaTime)
 		}
 
 		AccumulatedTime += DeltaTime;
-		while (AccumulatedTime >= Settings->SimulationStepTimeOneD)
+		while (AccumulatedTime >= Settings.SimulationStepTimeOneD)
 		{
-			SimulateStep(Settings->SimulationStepTimeOneD);
-			AccumulatedTime -= Settings->SimulationStepTimeOneD;
+			SimulateStep(Settings.SimulationStepTimeOneD);
+			AccumulatedTime -= Settings.SimulationStepTimeOneD;
 			++SimulationStepCount;
+		}
+
+		if (bRecordBenchmarkFrameStats && FluidPipeSubsystem)
+		{
+			FluidPipeSubsystem->RecordBenchmarkOneDFrameSimulationDurationSeconds(FPlatformTime::Seconds() - FrameStartSeconds);
 		}
 
 		if (OneDWorldDebugDetailLevel > 0 && !UsesOffGameThreadOneDSimulationState())
@@ -114,9 +123,9 @@ void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegm
 void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegmentStateOneD>& Segments, const TArray<APipeFluidPipeActor*>& IncomingPipeActors)
 {
 	SegmentStates = Segments;
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
+	const ULazyFluidPipesDeveloperSettings& Settings = GetSimulationSettings();
 	TArray<APipeFluidPipeActor*> MergePipeActors = IncomingPipeActors;
-	if (Settings->OneDMergeColinearPassiveJunctionAtImport)
+	if (Settings.OneDMergeColinearPassiveJunctionAtImport)
 	{
 		FFluidPipePassiveJunctionMerge::MergeColinearOneDSegments(SegmentStates, MergePipeActors, GetWorld());
 	}
@@ -136,7 +145,7 @@ void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegm
 	}
 	RebuildJunctionSceneNodeKeyTopology(SegmentStates);
 	AccumulatedTime = 0.0f;
-	EnsureActiveOneDSimulationMatchesSettings(*Settings);
+	EnsureActiveOneDSimulationMatchesSettings(Settings);
 }
 
 bool UFluidSegment1DSubsystem::UsesOffGameThreadOneDSimulationState() const
@@ -156,6 +165,16 @@ FString UFluidSegment1DSubsystem::BuildOneDSimulationBackendDisplayName(EFluidSe
 	default:
 		return TEXT("CPU-GameThread");
 	}
+}
+
+const ULazyFluidPipesDeveloperSettings& UFluidSegment1DSubsystem::GetSimulationSettings() const
+{
+	return FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
+}
+
+void UFluidSegment1DSubsystem::RebuildActiveSimulationForCurrentSettings()
+{
+	EnsureActiveOneDSimulationMatchesSettings(GetSimulationSettings());
 }
 
 void UFluidSegment1DSubsystem::EnsureActiveOneDSimulationMatchesSettings(const ULazyFluidPipesDeveloperSettings& Settings)
@@ -179,6 +198,7 @@ void UFluidSegment1DSubsystem::EnsureActiveOneDSimulationMatchesSettings(const U
 			FFluidSegment1DCPUSimulation* CpuSimulation = static_cast<FFluidSegment1DCPUSimulation*>(ActiveSimulation.Get());
 			if (CpuSimulation)
 			{
+				CpuSimulation->BindSimulationSettings(&Settings);
 				const bool bUseBackgroundWorker = ResolvedBackend == EFluidSegmentSimulationOneDBackend::CpuBackgroundThread;
 				if (CpuSimulation->UsesBackgroundWorker() != bUseBackgroundWorker)
 				{
@@ -222,6 +242,7 @@ void UFluidSegment1DSubsystem::EnsureActiveOneDSimulationMatchesSettings(const U
 		FFluidSegment1DCPUSimulation* CpuSimulation = static_cast<FFluidSegment1DCPUSimulation*>(ActiveSimulation.Get());
 		if (CpuSimulation)
 		{
+			CpuSimulation->BindSimulationSettings(&Settings);
 			const bool bUseBackgroundWorker = ResolvedBackend == EFluidSegmentSimulationOneDBackend::CpuBackgroundThread;
 			CpuSimulation->ConfigureBackgroundWorker(bUseBackgroundWorker);
 			if (bUseBackgroundWorker)
@@ -286,14 +307,14 @@ void UFluidSegment1DSubsystem::ReadbackAndDrawOffGameThreadOneDDebug(int32 OneDW
 
 void UFluidSegment1DSubsystem::DrawOneDDebugForSegmentIndices(int32 OneDWorldDebugDetailLevel, const TArray<int32>& SegmentIndicesWithinDebugDrawDistance)
 {
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	if (Settings->EnableOneDSimulationStateVariableClamping)
+	const ULazyFluidPipesDeveloperSettings& Settings = GetSimulationSettings();
+	if (Settings.EnableOneDSimulationStateVariableClamping)
 	{
 		for (const int32 SegmentIndex : SegmentIndicesWithinDebugDrawDistance)
 		{
 			if (SegmentStates.IsValidIndex(SegmentIndex))
 			{
-				FFluidSimulationStateLimits::ClampSegmentStateOneD(SegmentStates[SegmentIndex], *Settings);
+				FFluidSimulationStateLimits::ClampSegmentStateOneD(SegmentStates[SegmentIndex], Settings);
 			}
 		}
 	}
@@ -449,8 +470,8 @@ void UFluidSegment1DSubsystem::UpdateOneDimensionBoundaryFlowsFromAttachedPipePo
 
 void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 {
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	EnsureActiveOneDSimulationMatchesSettings(*Settings);
+	const ULazyFluidPipesDeveloperSettings& Settings = GetSimulationSettings();
+	EnsureActiveOneDSimulationMatchesSettings(Settings);
 
 	switch (ActiveOneDSimulationBackend)
 	{
@@ -570,10 +591,10 @@ void UFluidSegment1DSubsystem::UpdateDerivedCellValues(FFluidSegmentStateOneD& S
 
 float UFluidSegment1DSubsystem::ComputeStableStepTime(const FFluidSegmentStateOneD& SegmentState) const
 {
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
+	const ULazyFluidPipesDeveloperSettings& Settings = GetSimulationSettings();
 	const float SafeWaveSpeed = FMath::Max(SegmentState.WaveSpeed, 1.0f);
 	const float SafeCellLength = FMath::Max(SegmentState.CellLength, 0.01f);
-	return Settings->OneDSolverCflFactor * SafeCellLength / SafeWaveSpeed;
+	return Settings.OneDSolverCflFactor * SafeCellLength / SafeWaveSpeed;
 }
 
 float UFluidSegment1DSubsystem::GetCrossSectionArea(const FFluidSegmentStateOneD& SegmentState) const
@@ -617,8 +638,8 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 	}
 	FlushPersistentDebugLines(World);
 
-	const ULazyFluidPipesDeveloperSettings* WorldDebugSettings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	const bool DrawOneDWireGeometry = WorldDebugSettings->WorldDebugIncludeOneDWireGeometry;
+	const ULazyFluidPipesDeveloperSettings& WorldDebugSettings = GetSimulationSettings();
+	const bool DrawOneDWireGeometry = WorldDebugSettings.WorldDebugIncludeOneDWireGeometry;
 	const bool DrawSegmentAndEndpointText = DebugLevel >= 1;
 	const bool DrawPerCellText = DebugLevel >= 2;
 	const bool DrawEveryCellText = DebugLevel >= 3;
@@ -675,7 +696,7 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 
 		if (DrawSegmentAndEndpointText)
 		{
-			if (WorldDebugSettings->WorldDebugIncludeOneDSegmentSummary)
+			if (WorldDebugSettings.WorldDebugIncludeOneDSegmentSummary)
 			{
 				const FString SegmentSummaryLine = FString::Format(
 					TEXT("{0} | cells={1} L={2} dx={3} | c={4} D={5} rho={6} f={7} | A={8} dtStable={9} | Pmin={10} Pmax={11}"),
@@ -696,7 +717,7 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 				FluidPipesWorldDebugTextQueueString(World, CenterWorld + FVector(0.0f, 0.0f, 48.0f), SegmentSummaryLine, FColor::Yellow, 1.0f);
 			}
 
-			if (WorldDebugSettings->WorldDebugIncludeOneDEndpointCaptions)
+			if (WorldDebugSettings.WorldDebugIncludeOneDEndpointCaptions)
 			{
 				const FString LeftEndpointLine = FString::Format(
 					TEXT("Start | nodeKey={0} | {1} | cell0 P={2} Q={3}"),
@@ -744,7 +765,7 @@ void UFluidSegment1DSubsystem::DrawDebugOneDSegments(int32 DebugLevel) const
 				DrawDebugDirectionalArrow(World, ArrowStartWorld, ArrowEndWorld, ArrowHalfLength * 0.35f, FColor(0, 255, 255), true, -1.0f, 0, 2.0f);
 			}
 
-			if (WorldDebugSettings->WorldDebugIncludeOneDPerCellCaptions && DrawPerCellText && (CellIndex % LabelStride == 0))
+			if (WorldDebugSettings.WorldDebugIncludeOneDPerCellCaptions && DrawPerCellText && (CellIndex % LabelStride == 0))
 			{
 				const FFluidSegmentCellStateOneD& CellState = SegmentState.CellStates[CellIndex];
 				const FString CellLabel = FString::Format(

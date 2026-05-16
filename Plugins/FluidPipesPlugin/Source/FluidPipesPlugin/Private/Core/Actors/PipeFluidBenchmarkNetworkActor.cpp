@@ -47,28 +47,36 @@ void APipeFluidBenchmarkNetworkActor::SpawnBenchmarkPoints(TArray<APipeFluidBase
 		return;
 	}
 
-	const int32 SafeGridSizeX = FMath::Max(2, GridSizeX);
-	const int32 SafeGridSizeY = FMath::Max(2, GridSizeY);
-	SpawnedPoints.SetNumZeroed(SafeGridSizeX * SafeGridSizeY);
+	const int32 BenchmarkGridSizeX = FMath::Max(1, GridSizeX);
+	const int32 BenchmarkGridSizeY = FMath::Max(1, GridSizeY);
+	SpawnedPoints.SetNumZeroed(BenchmarkGridSizeX * BenchmarkGridSizeY);
 
 	FActorSpawnParameters SpawnParameters;
 	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	SpawnParameters.OverrideLevel = GetLevel();
 
-	for (int32 PointIndexX = 0; PointIndexX < SafeGridSizeX; ++PointIndexX)
+	for (int32 PointIndexX = 0; PointIndexX < BenchmarkGridSizeX; ++PointIndexX)
 	{
-		for (int32 PointIndexY = 0; PointIndexY < SafeGridSizeY; ++PointIndexY)
+		for (int32 PointIndexY = 0; PointIndexY < BenchmarkGridSizeY; ++PointIndexY)
 		{
 			TSubclassOf<APipeFluidBasePointActor> PointClass = PointActorClass ? PointActorClass.Get() : APipeFluidPointActor::StaticClass();
 			if (PointIndexX == 0 && PointIndexY == 0)
 			{
 				PointClass = SourceActorClass ? SourceActorClass.Get() : APipeFluidSourceActor::StaticClass();
 			}
-			else if (PointIndexX == SafeGridSizeX - 1 && PointIndexY == 0)
+			else if (BenchmarkGridSizeX == 1 && BenchmarkGridSizeY > 1 && PointIndexY == BenchmarkGridSizeY - 1)
+			{
+				PointClass = PressureConsumerActorClass ? PressureConsumerActorClass.Get() : APipeFluidPressureConsumerActor::StaticClass();
+			}
+			else if (BenchmarkGridSizeY == 1 && PointIndexX == BenchmarkGridSizeX - 1)
 			{
 				PointClass = ConsumerActorClass ? ConsumerActorClass.Get() : APipeFluidConsumerActor::StaticClass();
 			}
-			else if (PointIndexX == SafeGridSizeX - 1 && PointIndexY == SafeGridSizeY - 1)
+			else if (PointIndexX == BenchmarkGridSizeX - 1 && PointIndexY == 0 && BenchmarkGridSizeX > 1)
+			{
+				PointClass = ConsumerActorClass ? ConsumerActorClass.Get() : APipeFluidConsumerActor::StaticClass();
+			}
+			else if (PointIndexX == BenchmarkGridSizeX - 1 && PointIndexY == BenchmarkGridSizeY - 1 && BenchmarkGridSizeX > 1 && BenchmarkGridSizeY > 1)
 			{
 				PointClass = PressureConsumerActorClass ? PressureConsumerActorClass.Get() : APipeFluidPressureConsumerActor::StaticClass();
 			}
@@ -87,7 +95,7 @@ void APipeFluidBenchmarkNetworkActor::SpawnBenchmarkPoints(TArray<APipeFluidBase
 				continue;
 			}
 
-			const int32 PointArrayIndex = BuildPointArrayIndex(PointIndexX, PointIndexY, SafeGridSizeY);
+			const int32 PointArrayIndex = BuildPointArrayIndex(PointIndexX, PointIndexY, BenchmarkGridSizeY);
 			SpawnedPoints[PointArrayIndex] = PointActor;
 			PointActor->SceneNodeKey = PointArrayIndex;
 			SpawnedBenchmarkActors.Add(PointActor);
@@ -117,8 +125,8 @@ void APipeFluidBenchmarkNetworkActor::SpawnBenchmarkPipes(const TArray<APipeFlui
 		return;
 	}
 
-	const int32 SafeGridSizeX = FMath::Max(2, GridSizeX);
-	const int32 SafeGridSizeY = FMath::Max(2, GridSizeY);
+	const int32 BenchmarkGridSizeX = FMath::Max(1, GridSizeX);
+	const int32 BenchmarkGridSizeY = FMath::Max(1, GridSizeY);
 
 	FActorSpawnParameters SpawnParameters;
 	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -126,20 +134,20 @@ void APipeFluidBenchmarkNetworkActor::SpawnBenchmarkPipes(const TArray<APipeFlui
 
 	int32 PipeSerial = 0;
 	TSubclassOf<APipeFluidPipeActor> ResolvedPipeActorClass = PipeActorClass ? PipeActorClass.Get() : APipeFluidPipeActor::StaticClass();
-	for (int32 PointIndexX = 0; PointIndexX < SafeGridSizeX; ++PointIndexX)
+	for (int32 PointIndexX = 0; PointIndexX < BenchmarkGridSizeX; ++PointIndexX)
 	{
-		for (int32 PointIndexY = 0; PointIndexY < SafeGridSizeY; ++PointIndexY)
+		for (int32 PointIndexY = 0; PointIndexY < BenchmarkGridSizeY; ++PointIndexY)
 		{
-			const int32 CurrentIndex = BuildPointArrayIndex(PointIndexX, PointIndexY, SafeGridSizeY);
+			const int32 CurrentIndex = BuildPointArrayIndex(PointIndexX, PointIndexY, BenchmarkGridSizeY);
 			APipeFluidBasePointActor* CurrentPoint = SpawnedPoints.IsValidIndex(CurrentIndex) ? SpawnedPoints[CurrentIndex] : nullptr;
 			if (!CurrentPoint)
 			{
 				continue;
 			}
 
-			if (PointIndexX + 1 < SafeGridSizeX)
+			if (PointIndexX + 1 < BenchmarkGridSizeX)
 			{
-				const int32 RightIndex = BuildPointArrayIndex(PointIndexX + 1, PointIndexY, SafeGridSizeY);
+				const int32 RightIndex = BuildPointArrayIndex(PointIndexX + 1, PointIndexY, BenchmarkGridSizeY);
 				APipeFluidBasePointActor* RightPoint = SpawnedPoints.IsValidIndex(RightIndex) ? SpawnedPoints[RightIndex] : nullptr;
 				if (RightPoint)
 				{
@@ -159,9 +167,9 @@ void APipeFluidBenchmarkNetworkActor::SpawnBenchmarkPipes(const TArray<APipeFlui
 				}
 			}
 
-			if (PointIndexY + 1 < SafeGridSizeY)
+			if (PointIndexY + 1 < BenchmarkGridSizeY)
 			{
-				const int32 UpIndex = BuildPointArrayIndex(PointIndexX, PointIndexY + 1, SafeGridSizeY);
+				const int32 UpIndex = BuildPointArrayIndex(PointIndexX, PointIndexY + 1, BenchmarkGridSizeY);
 				APipeFluidBasePointActor* UpPoint = SpawnedPoints.IsValidIndex(UpIndex) ? SpawnedPoints[UpIndex] : nullptr;
 				if (UpPoint)
 				{
@@ -191,7 +199,19 @@ FVector APipeFluidBenchmarkNetworkActor::BuildPointLocation(const int32 PointInd
 	return ActorLocation + GetActorTransform().TransformVectorNoScale(LocalOffset);
 }
 
-int32 APipeFluidBenchmarkNetworkActor::BuildPointArrayIndex(const int32 PointIndexX, const int32 PointIndexY, const int32 SafeGridSizeY) const
+int32 APipeFluidBenchmarkNetworkActor::BuildPointArrayIndex(const int32 PointIndexX, const int32 PointIndexY, const int32 BenchmarkGridSizeY) const
 {
-	return PointIndexX * SafeGridSizeY + PointIndexY;
+	return PointIndexX * BenchmarkGridSizeY + PointIndexY;
+}
+
+FString APipeFluidBenchmarkNetworkActor::BuildNetworkDescription() const
+{
+	return FString::Format(
+		TEXT("{0} ({1}x{2}, cells={3})"),
+		{
+			GetActorLabel(),
+			FString::FromInt(GridSizeX),
+			FString::FromInt(GridSizeY),
+			FString::FromInt(PipeSimulationCellCount)
+		});
 }

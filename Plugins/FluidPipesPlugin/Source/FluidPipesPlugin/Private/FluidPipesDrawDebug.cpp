@@ -3,6 +3,7 @@
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformTime.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Other/FluidPipesSimulationSettingsLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -36,8 +37,8 @@ bool FluidPipesIsWorldLocationWithinDebugDrawDistance(const UWorld* World, const
 		return false;
 	}
 
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	const float MaximumDistanceCentimeters = Settings->WorldDebugMaximumDrawDistanceCentimeters;
+	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(World);
+	const float MaximumDistanceCentimeters = Settings.WorldDebugMaximumDrawDistanceCentimeters;
 	if (MaximumDistanceCentimeters <= KINDA_SMALL_NUMBER)
 	{
 		return true;

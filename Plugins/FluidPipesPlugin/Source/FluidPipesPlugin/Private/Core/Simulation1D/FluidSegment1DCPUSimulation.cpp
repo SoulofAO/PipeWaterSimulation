@@ -9,6 +9,7 @@
 #include "HAL/PlatformProcess.h"
 #include "HAL/Runnable.h"
 #include "HAL/RunnableThread.h"
+#include "Other/FluidPipesSimulationSettingsLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 
 class FFluidSegment1DCpuWorkerRunnable : public FRunnable
@@ -79,6 +80,11 @@ void FFluidSegment1DCPUSimulation::Release()
 		FPlatformProcess::ReturnSynchEventToPool(StepCompletedEvent);
 		StepCompletedEvent = nullptr;
 	}
+}
+
+void FFluidSegment1DCPUSimulation::BindSimulationSettings(const ULazyFluidPipesDeveloperSettings* SimulationSettings)
+{
+	BoundSimulationSettings = SimulationSettings;
 }
 
 void FFluidSegment1DCPUSimulation::ConfigureBackgroundWorker(bool bEnableBackgroundWorker)
@@ -388,8 +394,10 @@ void FFluidSegment1DCPUSimulation::SimulateStepOnSegmentStates(TArray<FFluidSegm
 		SegmentState = MoveTemp(NextSegmentState);
 	}
 
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	FFluidSimulationStateLimits::ClampAllSegmentStatesOneD(TargetSegmentStates, *Settings);
+	const ULazyFluidPipesDeveloperSettings& Settings = BoundSimulationSettings
+		? *BoundSimulationSettings
+		: FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(nullptr);
+	FFluidSimulationStateLimits::ClampAllSegmentStatesOneD(TargetSegmentStates, Settings);
 }
 
 void FFluidSegment1DCPUSimulation::UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors(TArray<FFluidSegmentStateOneD>& TargetSegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors) const
@@ -608,10 +616,12 @@ void FFluidSegment1DCPUSimulation::UpdateDerivedCellValues(FFluidSegmentStateOne
 
 float FFluidSegment1DCPUSimulation::ComputeStableStepTime(const FFluidSegmentStateOneD& SegmentState) const
 {
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
+	const ULazyFluidPipesDeveloperSettings& Settings = BoundSimulationSettings
+		? *BoundSimulationSettings
+		: FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(nullptr);
 	const float SafeWaveSpeed = FMath::Max(SegmentState.WaveSpeed, 1.0f);
 	const float SafeCellLength = FMath::Max(SegmentState.CellLength, 0.01f);
-	return Settings->OneDSolverCflFactor * SafeCellLength / SafeWaveSpeed;
+	return Settings.OneDSolverCflFactor * SafeCellLength / SafeWaveSpeed;
 }
 
 float FFluidSegment1DCPUSimulation::GetCrossSectionArea(const FFluidSegmentStateOneD& SegmentState) const

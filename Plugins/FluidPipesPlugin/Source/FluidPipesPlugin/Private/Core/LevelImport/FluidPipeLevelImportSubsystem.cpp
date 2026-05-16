@@ -8,6 +8,7 @@
 #include "EngineUtils.h"
 #include "FluidPipesDrawDebug.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Other/FluidPipesSimulationSettingsLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 
 static void ImportFluidActorsIntoZeroDSubsystem(UWorld* World)
@@ -160,8 +161,8 @@ static void ImportFluidActorsIntoOneDSubsystem(UWorld* World)
 void UFluidPipeLevelImportSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	if (Settings->LevelPipeImportTarget == EFluidLevelPipeImportTarget::Disabled)
+	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
+	if (Settings.LevelPipeImportTarget == EFluidLevelPipeImportTarget::Disabled)
 	{
 		bImportFinished = true;
 	}
@@ -194,28 +195,33 @@ bool UFluidPipeLevelImportSubsystem::IsTickable() const
 	return !bImportFinished;
 }
 
+void UFluidPipeLevelImportSubsystem::RunLevelPipeImportNow()
+{
+	RunLevelPipeImport();
+}
+
 void UFluidPipeLevelImportSubsystem::RunLevelPipeImport()
 {
 	UWorld* World = GetWorld();
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	if (!World || Settings->LevelPipeImportTarget == EFluidLevelPipeImportTarget::Disabled)
+	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
+	if (!World || Settings.LevelPipeImportTarget == EFluidLevelPipeImportTarget::Disabled)
 	{
 		return;
 	}
 
-	if (Settings->LevelPipeImportTarget == EFluidLevelPipeImportTarget::ZeroDNetwork)
+	if (Settings.LevelPipeImportTarget == EFluidLevelPipeImportTarget::ZeroDNetwork)
 	{
 		ImportFluidActorsIntoZeroDSubsystem(World);
 		return;
 	}
 
-	if (Settings->LevelPipeImportTarget == EFluidLevelPipeImportTarget::OneDSegments)
+	if (Settings.LevelPipeImportTarget == EFluidLevelPipeImportTarget::OneDSegments)
 	{
 		ImportFluidActorsIntoOneDSubsystem(World);
 		return;
 	}
 
-	if (Settings->LevelPipeImportTarget == EFluidLevelPipeImportTarget::Both)
+	if (Settings.LevelPipeImportTarget == EFluidLevelPipeImportTarget::Both)
 	{
 		ImportFluidActorsIntoZeroDSubsystem(World);
 		ImportFluidActorsIntoOneDSubsystem(World);

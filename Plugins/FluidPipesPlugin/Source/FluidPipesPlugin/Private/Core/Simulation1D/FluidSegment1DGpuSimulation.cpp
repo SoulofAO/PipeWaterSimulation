@@ -15,6 +15,7 @@
 #include "RHIUtilities.h"
 #include "RenderGraphUtils.h"
 #include "Core/Simulation/FluidSimulationStateLimits.h"
+#include "Other/FluidPipesSimulationSettingsLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 #include "RenderingThread.h"
 #include "ShaderParameterStruct.h"
@@ -558,12 +559,12 @@ void FFluidSegment1DGpuSimulation::RebuildFromSegments(const TArray<FFluidSegmen
 {
 	ReleaseInternal();
 
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	bEnableOneDStateVariableClamping = Settings->EnableOneDSimulationStateVariableClamping;
-	OneDMinimumPressure = Settings->OneDMinimumPressure;
-	OneDMaximumPressure = Settings->OneDMaximumPressure;
-	OneDMinimumVolumeFlowRate = Settings->OneDMinimumVolumeFlowRate;
-	OneDMaximumVolumeFlowRate = Settings->OneDMaximumVolumeFlowRate;
+	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(SimulationWorld);
+	bEnableOneDStateVariableClamping = Settings.EnableOneDSimulationStateVariableClamping;
+	OneDMinimumPressure = Settings.OneDMinimumPressure;
+	OneDMaximumPressure = Settings.OneDMaximumPressure;
+	OneDMinimumVolumeFlowRate = Settings.OneDMinimumVolumeFlowRate;
+	OneDMaximumVolumeFlowRate = Settings.OneDMaximumVolumeFlowRate;
 
 	SegmentCount = static_cast<uint32>(SegmentStates.Num());
 	SegmentCellBaseCpu.Reset();

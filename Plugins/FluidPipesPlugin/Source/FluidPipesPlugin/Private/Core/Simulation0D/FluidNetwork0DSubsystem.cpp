@@ -9,6 +9,8 @@
 #include "FluidPipesWorldDebugText.h"
 #include "HAL/PlatformTime.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Core/LazyFluidPipeSubsystem.h"
+#include "Other/FluidPipesSimulationSettingsLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 
 static void CollectFluidPipeBasePointActorsOrderedSameAsZeroDimensionImport(UWorld* World, TArray<APipeFluidBasePointActor*>& OutOrderedUniqueActors)
@@ -66,20 +68,27 @@ void UFluidNetwork0DSubsystem::Deinitialize()
 
 void UFluidNetwork0DSubsystem::Tick(float DeltaTime)
 {
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	const bool bEnableFluidNetworkSimulationZeroD = Settings->EnableFluidNetworkSimulationZeroD;
+	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
+	const bool bEnableFluidNetworkSimulationZeroD = Settings.EnableFluidNetworkSimulationZeroD;
 	if (bEnableFluidNetworkSimulationZeroD)
 	{
 		const bool bPrintSimulationFrameTiming = FluidPipesShouldPrintSimulationFrameTiming();
-		const double FrameStartSeconds = bPrintSimulationFrameTiming ? FPlatformTime::Seconds() : 0.0;
+		ULazyFluidPipeSubsystem* FluidPipeSubsystem = GetWorld() ? GetWorld()->GetSubsystem<ULazyFluidPipeSubsystem>() : nullptr;
+		const bool bRecordBenchmarkFrameStats = FluidPipeSubsystem && FluidPipeSubsystem->IsBenchmarkFrameStatsRecordingEnabled();
+		const double FrameStartSeconds = (bPrintSimulationFrameTiming || bRecordBenchmarkFrameStats) ? FPlatformTime::Seconds() : 0.0;
 		int32 SimulationStepCount = 0;
 
 		AccumulatedTime += DeltaTime;
-		while (AccumulatedTime >= Settings->SimulationStepTimeZeroD)
+		while (AccumulatedTime >= Settings.SimulationStepTimeZeroD)
 		{
-			SimulateStep(Settings->SimulationStepTimeZeroD);
-			AccumulatedTime -= Settings->SimulationStepTimeZeroD;
+			SimulateStep(Settings.SimulationStepTimeZeroD);
+			AccumulatedTime -= Settings.SimulationStepTimeZeroD;
 			++SimulationStepCount;
+		}
+
+		if (bRecordBenchmarkFrameStats && FluidPipeSubsystem)
+		{
+			FluidPipeSubsystem->RecordBenchmarkZeroDFrameSimulationDurationSeconds(FPlatformTime::Seconds() - FrameStartSeconds);
 		}
 
 		if (FluidPipesShouldDrawZeroDWorldOverlay())
@@ -134,8 +143,8 @@ void UFluidNetwork0DSubsystem::ApplyImportedZeroDNetwork(const TArray<FFluidNetw
 {
 	NetworkNodeStates = Nodes;
 	NetworkEdgeStates = Edges;
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	if (Settings->ZeroDMergeColinearPassiveJunctionAtImport)
+	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
+	if (Settings.ZeroDMergeColinearPassiveJunctionAtImport)
 	{
 		FFluidPipePassiveJunctionMerge::MergeColinearZeroDEdges(NetworkNodeStates, NetworkEdgeStates, GetWorld());
 	}
@@ -148,8 +157,8 @@ void UFluidNetwork0DSubsystem::SimulateStep(float SimulationStepTime)
 	UpdateEdgeFlows(SimulationStepTime);
 	IntegrateNodeVolumes(SimulationStepTime);
 	UpdateNodePressures();
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	FFluidSimulationStateLimits::ClampAllNetworkStatesZeroD(NetworkNodeStates, NetworkEdgeStates, *Settings);
+	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
+	FFluidSimulationStateLimits::ClampAllNetworkStatesZeroD(NetworkNodeStates, NetworkEdgeStates, Settings);
 }
 
 void UFluidNetwork0DSubsystem::RefreshNetworkNodeExternalFlowsFromWorldPointActors()
@@ -241,8 +250,8 @@ void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
 		return;
 	}
 
-	const ULazyFluidPipesDeveloperSettings* WorldDebugSettings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	const bool DrawZeroDWireGeometry = WorldDebugSettings->WorldDebugIncludeZeroDWireGeometry;
+	const ULazyFluidPipesDeveloperSettings& WorldDebugSettings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
+	const bool DrawZeroDWireGeometry = WorldDebugSettings.WorldDebugIncludeZeroDWireGeometry;
 
 	TArray<APipeFluidBasePointActor*> PointActors;
 	for (TActorIterator<APipeFluidBasePointActor> Iterator(World); Iterator; ++Iterator)
@@ -312,7 +321,7 @@ void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
 			DrawDebugSphere(World, NodeWorldLocation, 14.0f, 10, PressureDebugColor, false, 0.0f, 0, 1.5f);
 		}
 
-		if (WorldDebugSettings->WorldDebugIncludeZeroDNodeCaptions)
+		if (WorldDebugSettings.WorldDebugIncludeZeroDNodeCaptions)
 		{
 			const FString NodeDebugLabel = FString::Format(
 				TEXT("{0} P={1} V={2} SrcQ={3}"),
@@ -348,7 +357,7 @@ void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
 			DrawDebugLine(World, FromWorldLocation, ToWorldLocation, FlowDebugColor, false, 0.0f, 0, LineThickness);
 		}
 
-		if (DrawZeroDWireGeometry && WorldDebugSettings->WorldDebugIncludeZeroDFlowArrows && FMath::Abs(FlowRateSigned) > KINDA_SMALL_NUMBER)
+		if (DrawZeroDWireGeometry && WorldDebugSettings.WorldDebugIncludeZeroDFlowArrows && FMath::Abs(FlowRateSigned) > KINDA_SMALL_NUMBER)
 		{
 			const FVector EdgeMidWorld = EdgeMidWorldLocation;
 			const FVector EdgeDirectionWorld = (ToWorldLocation - FromWorldLocation).GetSafeNormal();

@@ -1,0 +1,21 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "FluidPipesSimulationSettingsTypes.generated.h"
+
+UENUM(BlueprintType)
+enum class EFluidLevelPipeImportTarget : uint8
+{
+	Disabled,
+	ZeroDNetwork,
+	OneDSegments,
+	Both
+};
+
+UENUM(BlueprintType)
+enum class EFluidSegmentSimulationOneDBackend : uint8
+{
+	CpuGameThread,
+	CpuBackgroundThread,
+	GpuComputeShader
+};

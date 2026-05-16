@@ -6,6 +6,7 @@
 class FRunnable;
 class FRunnableThread;
 class FEvent;
+class ULazyFluidPipesDeveloperSettings;
 
 class FFluidSegment1DCPUSimulation : public FBaseFluidSegment1DSimulation
 {
@@ -19,6 +20,7 @@ public:
 	virtual void RebuildFromSegments(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, UWorld* SimulationWorld);
 	virtual void SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, float SimulationStepTime) override;
 
+	void BindSimulationSettings(const ULazyFluidPipesDeveloperSettings* SimulationSettings);
 	void ConfigureBackgroundWorker(bool bEnableBackgroundWorker);
 	bool UsesBackgroundWorker() const;
 	bool IsWorkerStateResident() const;
@@ -71,4 +73,6 @@ private:
 	FRunnableThread* WorkerThread = nullptr;
 	TAtomic<bool> bWorkerStopRequested{false};
 	TArray<float> PendingSimulationStepTimes;
+
+	const ULazyFluidPipesDeveloperSettings* BoundSimulationSettings = nullptr;
 };
