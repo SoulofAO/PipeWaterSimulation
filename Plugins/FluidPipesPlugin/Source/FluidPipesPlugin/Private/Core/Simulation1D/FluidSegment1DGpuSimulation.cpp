@@ -15,6 +15,8 @@
 #include "RHIUtilities.h"
 #include "RHIGPUReadback.h"
 #include "RenderGraphUtils.h"
+#include "Core/Simulation/FluidSimulationStateLimits.h"
+#include "Other/LazyFluidPipesDeveloperSettings.h"
 #include "RenderingThread.h"
 #include "ShaderParameterStruct.h"
 
@@ -226,6 +228,33 @@ public:
 };
 
 IMPLEMENT_GLOBAL_SHADER(FFluidSegment1DJunctionApplyCS, "/Plugin/FluidPipesPlugin/Private/FluidSegment1DJunctionApply.usf", "FluidSegment1DJunctionApplyMain", SF_Compute);
+
+class FFluidSegment1DStateClampCS : public FGlobalShader
+{
+public:
+	DECLARE_GLOBAL_SHADER(FFluidSegment1DStateClampCS);
+	SHADER_USE_PARAMETER_STRUCT(FFluidSegment1DStateClampCS, FGlobalShader);
+
+	static constexpr uint32 ThreadGroupSize = 64u;
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER(uint32, TotalCells)
+		SHADER_PARAMETER(uint32, bEnableClamping)
+		SHADER_PARAMETER(float, MinimumPressure)
+		SHADER_PARAMETER(float, MaximumPressure)
+		SHADER_PARAMETER(float, MinimumVolumeFlowRate)
+		SHADER_PARAMETER(float, MaximumVolumeFlowRate)
+		SHADER_PARAMETER_UAV(RWStructuredBuffer<float>, NextPressure)
+		SHADER_PARAMETER_UAV(RWStructuredBuffer<float>, NextFlow)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+};
+
+IMPLEMENT_GLOBAL_SHADER(FFluidSegment1DStateClampCS, "/Plugin/FluidPipesPlugin/Private/FluidSegment1DStateClamp.usf", "FluidSegment1DStateClampMain", SF_Compute);
 
 FFluidSegment1DGpuSimulation::FFluidSegment1DGpuSimulation() = default;
 
@@ -531,6 +560,13 @@ void FFluidSegment1DGpuSimulation::RebuildFromSegments(const TArray<FFluidSegmen
 {
 	ReleaseInternal();
 
+	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
+	bEnableOneDStateVariableClamping = Settings->EnableOneDSimulationStateVariableClamping;
+	OneDMinimumPressure = Settings->OneDMinimumPressure;
+	OneDMaximumPressure = Settings->OneDMaximumPressure;
+	OneDMinimumVolumeFlowRate = Settings->OneDMinimumVolumeFlowRate;
+	OneDMaximumVolumeFlowRate = Settings->OneDMaximumVolumeFlowRate;
+
 	SegmentCount = static_cast<uint32>(SegmentStates.Num());
 	SegmentCellBaseCpu.Reset();
 	SegmentCellCountCpu.Reset();
@@ -766,6 +802,21 @@ void FFluidSegment1DGpuSimulation::DispatchGpuSimulationStep(FRHICommandListImme
 		FComputeShaderUtils::Dispatch(ImmediateCommands, ApplyShader, ApplyParameters, FIntVector(FMath::DivideAndRoundUp(static_cast<int32>(TotalJunctionIncidents), static_cast<int32>(FFluidSegment1DJunctionApplyCS::ThreadGroupSize)), 1, 1));
 	}
 
+	if (bEnableOneDStateVariableClamping && TotalCellsGlobal > 0u)
+	{
+		FFluidSegment1DStateClampCS::FParameters ClampParameters;
+		ClampParameters.TotalCells = TotalCellsGlobal;
+		ClampParameters.bEnableClamping = 1u;
+		ClampParameters.MinimumPressure = OneDMinimumPressure;
+		ClampParameters.MaximumPressure = OneDMaximumPressure;
+		ClampParameters.MinimumVolumeFlowRate = OneDMinimumVolumeFlowRate;
+		ClampParameters.MaximumVolumeFlowRate = OneDMaximumVolumeFlowRate;
+		ClampParameters.NextPressure = NextPressureUav;
+		ClampParameters.NextFlow = NextFlowUav;
+		TShaderMapRef<FFluidSegment1DStateClampCS> ClampShader(GlobalShaderMap);
+		FComputeShaderUtils::Dispatch(ImmediateCommands, ClampShader, ClampParameters, FIntVector(FMath::DivideAndRoundUp(static_cast<int32>(TotalCellsGlobal), static_cast<int32>(FFluidSegment1DStateClampCS::ThreadGroupSize)), 1, 1));
+	}
+
 }
 
 void FFluidSegment1DGpuSimulation::SimulateStepGpuOnly(float SimulationStepTime)
@@ -884,4 +935,7 @@ void FFluidSegment1DGpuSimulation::ReadbackToSegmentStates(TArray<FFluidSegmentS
 			CellState.Velocity = CellState.FlowRate / FMath::Max(CrossSectionArea, KINDA_SMALL_NUMBER);
 		}
 	}
+
+	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
+	FFluidSimulationStateLimits::ClampAllSegmentStatesOneD(SegmentStates, *Settings);
 }

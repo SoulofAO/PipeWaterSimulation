@@ -1,6 +1,8 @@
 #include "Core/Simulation0D/FluidNetwork0DSubsystem.h"
 
 #include "Core/Actors/PipeFluidBasePointActor.h"
+#include "Core/LevelImport/FluidPipePassiveJunctionMerge.h"
+#include "Core/Simulation/FluidSimulationStateLimits.h"
 #include "DrawDebugHelpers.h"
 #include "EngineUtils.h"
 #include "FluidPipesDrawDebug.h"
@@ -112,6 +114,11 @@ void UFluidNetwork0DSubsystem::ApplyImportedZeroDNetwork(const TArray<FFluidNetw
 {
 	NetworkNodeStates = Nodes;
 	NetworkEdgeStates = Edges;
+	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
+	if (Settings->ZeroDMergeColinearPassiveJunctionAtImport)
+	{
+		FFluidPipePassiveJunctionMerge::MergeColinearZeroDEdges(NetworkNodeStates, NetworkEdgeStates, GetWorld());
+	}
 	AccumulatedTime = 0.0f;
 }
 
@@ -121,6 +128,8 @@ void UFluidNetwork0DSubsystem::SimulateStep(float SimulationStepTime)
 	UpdateEdgeFlows(SimulationStepTime);
 	IntegrateNodeVolumes(SimulationStepTime);
 	UpdateNodePressures();
+	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
+	FFluidSimulationStateLimits::ClampAllNetworkStatesZeroD(NetworkNodeStates, NetworkEdgeStates, *Settings);
 }
 
 void UFluidNetwork0DSubsystem::RefreshNetworkNodeExternalFlowsFromWorldPointActors()

@@ -24,11 +24,53 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "FluidZeroD")
 	bool EnableFluidNetworkSimulationZeroD = true;
 
+	UPROPERTY(EditAnywhere, Config, Category = "FluidZeroD")
+	bool ZeroDMergeColinearPassiveJunctionAtImport = false;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidZeroD")
+	bool EnableZeroDSimulationStateVariableClamping = false;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidZeroD")
+	float ZeroDMinimumPressure = -1000000.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidZeroD")
+	float ZeroDMaximumPressure = 1000000.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidZeroD")
+	float ZeroDMinimumVolumeFlowRate = -10000.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidZeroD")
+	float ZeroDMaximumVolumeFlowRate = 10000.0f;
+
 	UPROPERTY(EditAnywhere, Config, Category = "FluidZeroD", meta = (ClampMin = "0.001", UIMin = "0.001"))
 	float SimulationStepTimeZeroD = 0.016f;
 
 	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
 	bool EnableFluidSegmentSimulationOneD = true;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
+	bool OneDMergeColinearPassiveJunctionAtImport = true;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
+	bool EnableOneDSimulationStateVariableClamping = false;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
+	float OneDMinimumPressure = -1000000.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
+	float OneDMaximumPressure = 1000000.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
+	float OneDMinimumVolumeFlowRate = -10000.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
+	float OneDMaximumVolumeFlowRate = 10000.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
+	float OneDMinimumVelocity = -100.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
+	float OneDMaximumVelocity = 100.0f;
 
 	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD", meta = (ClampMin = "0.001", UIMin = "0.001"))
 	float SimulationStepTimeOneD = 0.008f;

@@ -1,6 +1,7 @@
 #include "Core/Simulation1D/FluidSegment1DCPUSimulation.h"
 
 #include "Core/Actors/PipeFluidBasePointActor.h"
+#include "Core/Simulation/FluidSimulationStateLimits.h"
 #include "Core/Actors/PipeFluidPipeActor.h"
 #include "Core/Simulation1D/FluidSegment1DSimulationLibrary.h"
 #include "Engine/World.h"
@@ -75,6 +76,9 @@ void FFluidSegment1DCPUSimulation::SimulateStep(UWorld* World, TArray<FFluidSegm
 		}
 		SegmentState = MoveTemp(NextSegmentState);
 	}
+
+	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
+	FFluidSimulationStateLimits::ClampAllSegmentStatesOneD(SegmentStates, *Settings);
 }
 
 void FFluidSegment1DCPUSimulation::UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors(TArray<FFluidSegmentStateOneD>& TargetSegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors) const

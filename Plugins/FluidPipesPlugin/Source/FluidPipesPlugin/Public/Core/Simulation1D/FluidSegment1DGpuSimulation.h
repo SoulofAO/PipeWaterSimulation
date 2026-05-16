@@ -99,4 +99,10 @@ private:
 	bool bResourcesAllocated = false;
 	bool bGpuStateResident = false;
 	bool bReadFromBufferA = true;
+
+	bool bEnableOneDStateVariableClamping = false;
+	float OneDMinimumPressure = 0.0f;
+	float OneDMaximumPressure = 0.0f;
+	float OneDMinimumVolumeFlowRate = 0.0f;
+	float OneDMaximumVolumeFlowRate = 0.0f;
 };

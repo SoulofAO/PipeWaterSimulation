@@ -2,6 +2,8 @@
 
 #include "Core/Actors/PipeFluidBasePointActor.h"
 #include "Core/Actors/PipeFluidPipeActor.h"
+#include "Core/LevelImport/FluidPipePassiveJunctionMerge.h"
+#include "Core/Simulation/FluidSimulationStateLimits.h"
 #include "Core/Simulation1D/FluidSegment1DCPUSimulation.h"
 #include "Core/Simulation1D/FluidSegment1DGpuSimulation.h"
 #include "Core/Simulation1D/FluidSegment1DSimulationLibrary.h"
@@ -54,6 +56,7 @@ void UFluidSegment1DSubsystem::Tick(float DeltaTime)
 				if (FFluidSegment1DGpuSimulation* GpuSimulation = static_cast<FFluidSegment1DGpuSimulation*>(ActiveSimulation.Get()))
 				{
 					GpuSimulation->ReadbackToSegmentStates(SegmentStates, Settings->FluidSegmentSimulationOneDGpuDebugReadbackWait);
+					FFluidSimulationStateLimits::ClampAllSegmentStatesOneD(SegmentStates, *Settings);
 				}
 			}
 			DrawDebugOneDSegments(OneDWorldDebugDetailLevel);
@@ -96,13 +99,19 @@ void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegm
 void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegmentStateOneD>& Segments, const TArray<APipeFluidPipeActor*>& IncomingPipeActors)
 {
 	SegmentStates = Segments;
+	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
+	TArray<APipeFluidPipeActor*> MergePipeActors = IncomingPipeActors;
+	if (Settings->OneDMergeColinearPassiveJunctionAtImport)
+	{
+		FFluidPipePassiveJunctionMerge::MergeColinearOneDSegments(SegmentStates, MergePipeActors, GetWorld());
+	}
 	SegmentPipeActors.Reset();
-	if (IncomingPipeActors.Num() == SegmentStates.Num())
+	if (MergePipeActors.Num() == SegmentStates.Num())
 	{
 		SegmentPipeActors.Reserve(SegmentStates.Num());
-		for (APipeFluidPipeActor* IncomingPipeActor : IncomingPipeActors)
+		for (APipeFluidPipeActor* MergePipeActor : MergePipeActors)
 		{
-			SegmentPipeActors.Add(IncomingPipeActor);
+			SegmentPipeActors.Add(MergePipeActor);
 		}
 	}
 
@@ -112,7 +121,6 @@ void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegm
 	}
 	RebuildJunctionSceneNodeKeyTopology(SegmentStates);
 	AccumulatedTime = 0.0f;
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
 	if (Settings->FluidSegmentSimulationOneDUseComputeShader)
 	{
 		if (!bActiveSimulationUsesGpu || !ActiveSimulation)
