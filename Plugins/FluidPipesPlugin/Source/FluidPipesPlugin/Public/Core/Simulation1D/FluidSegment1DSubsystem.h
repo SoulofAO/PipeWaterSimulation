@@ -50,6 +50,7 @@ private:
 	float GetCrossSectionArea(const FFluidSegmentStateOneD& SegmentState) const;
 	bool IsSegmentStateFinite(const FFluidSegmentStateOneD& SegmentState) const;
 	void DrawDebugOneDSegments(int32 DebugLevel) const;
+	void CollectSegmentIndicesWithinDebugDrawDistance(TArray<int32>& OutSegmentIndices) const;
 
 	UPROPERTY(EditAnywhere, Category = "FluidOneD")
 	TArray<FFluidSegmentStateOneD> SegmentStates;
@@ -61,6 +62,5 @@ private:
 	float AccumulatedTime = 0.0f;
 
 	TUniquePtr<FBaseFluidSegment1DSimulation> ActiveSimulation;
-	TUniquePtr<FBaseFluidSegment1DSimulation> CompareSimulation;
 	bool bActiveSimulationUsesGpu = false;
 };

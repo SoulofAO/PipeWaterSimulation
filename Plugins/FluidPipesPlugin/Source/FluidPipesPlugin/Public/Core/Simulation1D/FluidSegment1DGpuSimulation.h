@@ -2,7 +2,6 @@
 
 #include "Core/Simulation1D/BaseFluidSegment1DSimulation.h"
 #include "RHI.h"
-#include "RHIGPUReadback.h"
 
 class APipeFluidPipeActor;
 class UWorld;
@@ -21,11 +20,11 @@ public:
 
 	virtual void RebuildFromSegments(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, UWorld* SimulationWorld);
 
-	virtual void SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, float SimulationStepTime, bool bWaitForReadbackBeforeLock) override;
+	virtual void SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, float SimulationStepTime) override;
 
 	void SimulateStepGpuOnly(float SimulationStepTime);
 
-	void ReadbackToSegmentStates(TArray<FFluidSegmentStateOneD>& SegmentStates, bool bWaitForCompletion);
+	void ReadbackSegmentIndicesToSegmentStates(TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<int32>& SegmentIndices);
 
 	bool IsGpuStateResident() const;
 
@@ -56,8 +55,14 @@ private:
 	uint32 JunctionCount = 0u;
 	uint32 TotalJunctionIncidents = 0u;
 
-	TUniquePtr<FRHIGPUBufferReadback> GpuPressureReadback;
-	TUniquePtr<FRHIGPUBufferReadback> GpuFlowReadback;
+	struct FFluidSegmentPartialReadbackResources
+	{
+		FGPUFenceRHIRef Fence;
+		FStagingBufferRHIRef PressureStaging;
+		FStagingBufferRHIRef FlowStaging;
+	};
+
+	TArray<FFluidSegmentPartialReadbackResources> PartialReadbackResources;
 
 	FBufferRHIRef SegmentUintGpuBuffer;
 	FShaderResourceViewRHIRef SegmentUintGpuSrv;

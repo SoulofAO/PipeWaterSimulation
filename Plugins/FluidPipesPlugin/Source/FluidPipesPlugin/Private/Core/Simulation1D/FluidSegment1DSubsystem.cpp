@@ -17,7 +17,6 @@ void UFluidSegment1DSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	ActiveSimulation = MakeUnique<FFluidSegment1DCPUSimulation>();
-	CompareSimulation = MakeUnique<FFluidSegment1DCPUSimulation>();
 	bActiveSimulationUsesGpu = false;
 	ResetSimulationState();
 }
@@ -26,7 +25,6 @@ void UFluidSegment1DSubsystem::Deinitialize()
 {
 	ResetSimulationState();
 	ActiveSimulation.Reset();
-	CompareSimulation.Reset();
 	Super::Deinitialize();
 }
 
@@ -55,8 +53,19 @@ void UFluidSegment1DSubsystem::Tick(float DeltaTime)
 			{
 				if (FFluidSegment1DGpuSimulation* GpuSimulation = static_cast<FFluidSegment1DGpuSimulation*>(ActiveSimulation.Get()))
 				{
-					GpuSimulation->ReadbackToSegmentStates(SegmentStates, Settings->FluidSegmentSimulationOneDGpuDebugReadbackWait);
-					FFluidSimulationStateLimits::ClampAllSegmentStatesOneD(SegmentStates, *Settings);
+					TArray<int32> SegmentIndicesWithinDebugDrawDistance;
+					CollectSegmentIndicesWithinDebugDrawDistance(SegmentIndicesWithinDebugDrawDistance);
+					GpuSimulation->ReadbackSegmentIndicesToSegmentStates(SegmentStates, SegmentIndicesWithinDebugDrawDistance);
+					if (Settings->EnableOneDSimulationStateVariableClamping)
+					{
+						for (const int32 SegmentIndex : SegmentIndicesWithinDebugDrawDistance)
+						{
+							if (SegmentStates.IsValidIndex(SegmentIndex))
+							{
+								FFluidSimulationStateLimits::ClampSegmentStateOneD(SegmentStates[SegmentIndex], *Settings);
+							}
+						}
+					}
 				}
 			}
 			DrawDebugOneDSegments(OneDWorldDebugDetailLevel);
@@ -74,10 +83,6 @@ void UFluidSegment1DSubsystem::ResetSimulationState()
 	if (ActiveSimulation)
 	{
 		ActiveSimulation->Release();
-	}
-	if (CompareSimulation)
-	{
-		CompareSimulation->Release();
 	}
 	SegmentStates.Reset();
 	SegmentPipeActors.Reset();
@@ -159,9 +164,29 @@ void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegm
 			ActiveSimulation->RebuildFromSegments(SegmentStates, SegmentPipeActors);
 		}
 	}
-	if (CompareSimulation)
+}
+
+void UFluidSegment1DSubsystem::CollectSegmentIndicesWithinDebugDrawDistance(TArray<int32>& OutSegmentIndices) const
+{
+	OutSegmentIndices.Reset();
+	UWorld* World = GetWorld();
+	if (!World)
 	{
-		CompareSimulation->RebuildFromSegments(SegmentStates, SegmentPipeActors);
+		return;
+	}
+
+	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	{
+		const APipeFluidPipeActor* PipeActor = SegmentPipeActors.IsValidIndex(SegmentIndex) ? SegmentPipeActors[SegmentIndex].Get() : nullptr;
+		if (!PipeActor)
+		{
+			continue;
+		}
+
+		if (FluidPipesIsWorldLocationWithinDebugDrawDistance(World, PipeActor->GetActorLocation()))
+		{
+			OutSegmentIndices.Add(SegmentIndex);
+		}
 	}
 }
 
@@ -353,14 +378,6 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 		}
 	}
 
-	if (Settings->FluidSegmentSimulationOneDCompareGpuToCpu && bActiveSimulationUsesGpu)
-	{
-		if (FluidPipesShouldEmitScreenDebugMessages())
-		{
-			UKismetSystemLibrary::PrintString(this, TEXT("1D GPU vs CPU compare disabled in GPU-authoritative mode"), true, false, FLinearColor::Yellow, 0.0f);
-		}
-	}
-
 	if (bActiveSimulationUsesGpu)
 	{
 		float GpuEffectiveStepTime = SimulationStepTime;
@@ -379,7 +396,7 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 	}
 	else
 	{
-		ActiveSimulation->SimulateStep(GetWorld(), SegmentStates, SegmentPipeActors, SimulationStepTime, false);
+		ActiveSimulation->SimulateStep(GetWorld(), SegmentStates, SegmentPipeActors, SimulationStepTime);
 	}
 
 }

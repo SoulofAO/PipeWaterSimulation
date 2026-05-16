@@ -13,7 +13,6 @@
 #include "RHICommandList.h"
 #include "RHIResourceUtils.h"
 #include "RHIUtilities.h"
-#include "RHIGPUReadback.h"
 #include "RenderGraphUtils.h"
 #include "Core/Simulation/FluidSimulationStateLimits.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
@@ -284,8 +283,7 @@ void FFluidSegment1DGpuSimulation::Release()
 
 void FFluidSegment1DGpuSimulation::ReleaseInternal()
 {
-	GpuPressureReadback.Reset();
-	GpuFlowReadback.Reset();
+	PartialReadbackResources.Reset();
 	bGpuStateResident = false;
 	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuRelease)(
 		[this](FRHICommandListImmediate& ImmediateCommands)
@@ -697,8 +695,6 @@ void FFluidSegment1DGpuSimulation::RebuildFromSegments(const TArray<FFluidSegmen
 			CreateStructuredSrvUav(FlowGpuBufferB, FlowGpuBufferBSrv, FlowGpuBufferBUav, TEXT("FluidSegment1DFlowB"), FloatStride, TotalCellsGlobal, nullptr);
 		});
 	FlushRenderingCommands();
-	GpuPressureReadback = MakeUnique<FRHIGPUBufferReadback>(TEXT("FluidSegment1DPressureReadback"));
-	GpuFlowReadback = MakeUnique<FRHIGPUBufferReadback>(TEXT("FluidSegment1DFlowReadback"));
 	bResourcesAllocated = true;
 	bGpuStateResident = true;
 	bReadFromBufferA = true;
@@ -835,99 +831,171 @@ void FFluidSegment1DGpuSimulation::SimulateStepGpuOnly(float SimulationStepTime)
 	bReadFromBufferA = !bReadFromA;
 }
 
-void FFluidSegment1DGpuSimulation::SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, const float SimulationStepTime, const bool bWaitForReadbackBeforeLock)
+void FFluidSegment1DGpuSimulation::SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, const float SimulationStepTime)
 {
 	SimulateStepGpuOnly(SimulationStepTime);
-	if (bWaitForReadbackBeforeLock)
-	{
-		ReadbackToSegmentStates(SegmentStates, true);
-	}
 }
 
-void FFluidSegment1DGpuSimulation::ReadbackToSegmentStates(TArray<FFluidSegmentStateOneD>& SegmentStates, bool bWaitForCompletion)
+void FFluidSegment1DGpuSimulation::ReadbackSegmentIndicesToSegmentStates(TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<int32>& SegmentIndices)
 {
-	if (!bResourcesAllocated || !bGpuStateResident || TotalCellsGlobal == 0u || !GpuPressureReadback || !GpuFlowReadback)
+	if (!bResourcesAllocated || !bGpuStateResident || TotalCellsGlobal == 0u || SegmentIndices.Num() == 0)
 	{
 		return;
 	}
 
-	const uint32 ReadBytes = TotalCellsGlobal * sizeof(float);
+	struct FFluidSegmentPartialReadbackSlot
+	{
+		int32 SegmentIndex = INDEX_NONE;
+		uint32 SourceByteOffset = 0u;
+		uint32 ReadByteCount = 0u;
+		TArray<float> PressureScratch;
+		TArray<float> FlowScratch;
+	};
+
+	TArray<FFluidSegmentPartialReadbackSlot> ReadbackSlots;
+	ReadbackSlots.Reserve(SegmentIndices.Num());
+	TArray<uint32> EnqueueSourceByteOffsets;
+	TArray<uint32> EnqueueReadByteCounts;
+	EnqueueSourceByteOffsets.Reserve(SegmentIndices.Num());
+	EnqueueReadByteCounts.Reserve(SegmentIndices.Num());
+
+	for (const int32 SegmentIndex : SegmentIndices)
+	{
+		if (!SegmentStates.IsValidIndex(SegmentIndex) || !SegmentCellBaseCpu.IsValidIndex(SegmentIndex) || !SegmentCellCountCpu.IsValidIndex(SegmentIndex))
+		{
+			continue;
+		}
+
+		const int32 CellCount = static_cast<int32>(SegmentCellCountCpu[SegmentIndex]);
+		if (CellCount <= 0 || SegmentStates[SegmentIndex].CellStates.Num() != CellCount)
+		{
+			continue;
+		}
+
+		FFluidSegmentPartialReadbackSlot& Slot = ReadbackSlots.AddDefaulted_GetRef();
+		Slot.SegmentIndex = SegmentIndex;
+		Slot.SourceByteOffset = SegmentCellBaseCpu[SegmentIndex] * static_cast<uint32>(sizeof(float));
+		Slot.ReadByteCount = static_cast<uint32>(CellCount) * static_cast<uint32>(sizeof(float));
+		Slot.PressureScratch.SetNumUninitialized(CellCount);
+		Slot.FlowScratch.SetNumUninitialized(CellCount);
+		EnqueueSourceByteOffsets.Add(Slot.SourceByteOffset);
+		EnqueueReadByteCounts.Add(Slot.ReadByteCount);
+	}
+
+	if (ReadbackSlots.Num() == 0)
+	{
+		return;
+	}
+
+	while (PartialReadbackResources.Num() < ReadbackSlots.Num())
+	{
+		PartialReadbackResources.AddDefaulted();
+	}
+
 	FBufferRHIRef LatestPressureBuffer = bReadFromBufferA ? PressureGpuBufferA : PressureGpuBufferB;
 	FBufferRHIRef LatestFlowBuffer = bReadFromBufferA ? FlowGpuBufferA : FlowGpuBufferB;
 
-	TArray<float> PressureMirror;
-	TArray<float> FlowMirror;
-	PressureMirror.SetNumUninitialized(static_cast<int32>(TotalCellsGlobal));
-	FlowMirror.SetNumUninitialized(static_cast<int32>(TotalCellsGlobal));
-
-	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuDebugReadbackEnqueue)(
-		[this, LatestPressureBuffer, LatestFlowBuffer, ReadBytes](FRHICommandListImmediate& ImmediateCommands)
+	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuPartialReadbackEnqueue)(
+		[this, LatestPressureBuffer, LatestFlowBuffer, EnqueueSourceByteOffsets, EnqueueReadByteCounts](FRHICommandListImmediate& ImmediateCommands)
 		{
 			ImmediateCommands.ImmediateFlush(EImmediateFlushType::FlushRHIThread);
-			GpuPressureReadback->EnqueueCopy(ImmediateCommands, LatestPressureBuffer, ReadBytes);
-			GpuFlowReadback->EnqueueCopy(ImmediateCommands, LatestFlowBuffer, ReadBytes);
+			for (int32 SlotIndex = 0; SlotIndex < EnqueueSourceByteOffsets.Num(); ++SlotIndex)
+			{
+				const uint32 SourceByteOffset = EnqueueSourceByteOffsets[SlotIndex];
+				const uint32 ReadByteCount = EnqueueReadByteCounts[SlotIndex];
+				FFluidSegmentPartialReadbackResources& Resources = PartialReadbackResources[SlotIndex];
+				if (!Resources.Fence.IsValid())
+				{
+					Resources.Fence = RHICreateGPUFence(TEXT("FluidSegment1DPartialReadbackFence"));
+				}
+				if (!Resources.PressureStaging.IsValid())
+				{
+					Resources.PressureStaging = RHICreateStagingBuffer();
+				}
+				if (!Resources.FlowStaging.IsValid())
+				{
+					Resources.FlowStaging = RHICreateStagingBuffer();
+				}
+				Resources.Fence->Clear();
+				ImmediateCommands.CopyToStagingBuffer(LatestPressureBuffer, Resources.PressureStaging, SourceByteOffset, ReadByteCount);
+				ImmediateCommands.CopyToStagingBuffer(LatestFlowBuffer, Resources.FlowStaging, SourceByteOffset, ReadByteCount);
+				ImmediateCommands.WriteGPUFence(Resources.Fence);
+			}
 			ImmediateCommands.ImmediateFlush(EImmediateFlushType::FlushRHIThread);
 		});
 	FlushRenderingCommands();
 
-	if (bWaitForCompletion)
+	const double WaitStartSeconds = FPlatformTime::Seconds();
+	const double WaitTimeoutSeconds = 5.0;
+	bool bAllReadbacksReady = false;
+	while (FPlatformTime::Seconds() - WaitStartSeconds <= WaitTimeoutSeconds)
 	{
-		const double WaitStartSeconds = FPlatformTime::Seconds();
-		const double WaitTimeoutSeconds = 5.0;
-		while (!GpuPressureReadback->IsReady() || !GpuFlowReadback->IsReady())
+		bAllReadbacksReady = true;
+		for (int32 SlotIndex = 0; SlotIndex < ReadbackSlots.Num(); ++SlotIndex)
 		{
-			if (FPlatformTime::Seconds() - WaitStartSeconds > WaitTimeoutSeconds)
+			const FFluidSegmentPartialReadbackResources& Resources = PartialReadbackResources[SlotIndex];
+			if (!Resources.Fence.IsValid() || Resources.Fence->NumPendingWriteCommands.GetValue() != 0 || !Resources.Fence->Poll())
 			{
-				return;
+				bAllReadbacksReady = false;
+				break;
 			}
-			FPlatformProcess::Sleep(0.0f);
 		}
+		if (bAllReadbacksReady)
+		{
+			break;
+		}
+		FPlatformProcess::Sleep(0.0f);
 	}
-	else if (!GpuPressureReadback->IsReady() || !GpuFlowReadback->IsReady())
+
+	if (!bAllReadbacksReady)
 	{
 		return;
 	}
 
-	bool bReadbackCopySucceeded = false;
-	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuDebugReadbackLock)(
-		[this, ReadBytes, &PressureMirror, &FlowMirror, &bReadbackCopySucceeded](FRHICommandListImmediate& ImmediateCommands)
+	TArray<bool> SlotCopySucceeded;
+	SlotCopySucceeded.Init(false, ReadbackSlots.Num());
+
+	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuPartialReadbackLock)(
+		[this, &ReadbackSlots, &SlotCopySucceeded](FRHICommandListImmediate& ImmediateCommands)
 		{
-			void* PressureRead = GpuPressureReadback->Lock(ReadBytes);
-			void* FlowRead = GpuFlowReadback->Lock(ReadBytes);
-			if (PressureRead && FlowRead)
+			for (int32 SlotIndex = 0; SlotIndex < ReadbackSlots.Num(); ++SlotIndex)
 			{
-				FMemory::Memcpy(PressureMirror.GetData(), PressureRead, ReadBytes);
-				FMemory::Memcpy(FlowMirror.GetData(), FlowRead, ReadBytes);
-				bReadbackCopySucceeded = true;
+				FFluidSegmentPartialReadbackSlot& Slot = ReadbackSlots[SlotIndex];
+				FFluidSegmentPartialReadbackResources& Resources = PartialReadbackResources[SlotIndex];
+				void* PressureRead = ImmediateCommands.LockStagingBuffer(Resources.PressureStaging, Resources.Fence.GetReference(), 0, Slot.ReadByteCount);
+				void* FlowRead = ImmediateCommands.LockStagingBuffer(Resources.FlowStaging, Resources.Fence.GetReference(), 0, Slot.ReadByteCount);
+				if (PressureRead && FlowRead)
+				{
+					FMemory::Memcpy(Slot.PressureScratch.GetData(), PressureRead, Slot.ReadByteCount);
+					FMemory::Memcpy(Slot.FlowScratch.GetData(), FlowRead, Slot.ReadByteCount);
+					SlotCopySucceeded[SlotIndex] = true;
+				}
+				if (PressureRead)
+				{
+					ImmediateCommands.UnlockStagingBuffer(Resources.PressureStaging);
+				}
+				if (FlowRead)
+				{
+					ImmediateCommands.UnlockStagingBuffer(Resources.FlowStaging);
+				}
 			}
-			GpuPressureReadback->Unlock();
-			GpuFlowReadback->Unlock();
 		});
 	FlushRenderingCommands();
 
-	if (!bReadbackCopySucceeded)
+	for (int32 SlotIndex = 0; SlotIndex < ReadbackSlots.Num(); ++SlotIndex)
 	{
-		return;
-	}
+		if (!SlotCopySucceeded[SlotIndex])
+		{
+			continue;
+		}
 
-	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
-	{
-		FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
-		if (!SegmentCellBaseCpu.IsValidIndex(SegmentIndex) || !SegmentCellCountCpu.IsValidIndex(SegmentIndex))
-		{
-			continue;
-		}
-		const int32 CellCount = static_cast<int32>(SegmentCellCountCpu[SegmentIndex]);
-		if (SegmentState.CellStates.Num() != CellCount)
-		{
-			continue;
-		}
-		const uint32 BaseIndex = SegmentCellBaseCpu[SegmentIndex];
+		const FFluidSegmentPartialReadbackSlot& Slot = ReadbackSlots[SlotIndex];
+		FFluidSegmentStateOneD& SegmentState = SegmentStates[Slot.SegmentIndex];
+		const int32 CellCount = Slot.PressureScratch.Num();
 		for (int32 LocalIndex = 0; LocalIndex < CellCount; ++LocalIndex)
 		{
-			const int32 GlobalIndex = static_cast<int32>(BaseIndex) + LocalIndex;
-			SegmentState.CellStates[LocalIndex].Pressure = PressureMirror[GlobalIndex];
-			SegmentState.CellStates[LocalIndex].FlowRate = FlowMirror[GlobalIndex];
+			SegmentState.CellStates[LocalIndex].Pressure = Slot.PressureScratch[LocalIndex];
+			SegmentState.CellStates[LocalIndex].FlowRate = Slot.FlowScratch[LocalIndex];
 		}
 		const float CrossSectionArea = FluidSegment1DComputeCrossSectionArea(SegmentState);
 		for (FFluidSegmentCellStateOneD& CellState : SegmentState.CellStates)
@@ -935,7 +1003,4 @@ void FFluidSegment1DGpuSimulation::ReadbackToSegmentStates(TArray<FFluidSegmentS
 			CellState.Velocity = CellState.FlowRate / FMath::Max(CrossSectionArea, KINDA_SMALL_NUMBER);
 		}
 	}
-
-	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	FFluidSimulationStateLimits::ClampAllSegmentStatesOneD(SegmentStates, *Settings);
 }

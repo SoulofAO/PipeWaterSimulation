@@ -23,7 +23,7 @@ void FFluidSegment1DCPUSimulation::RebuildFromSegments(const TArray<FFluidSegmen
 	RebuildJunctionSceneNodeKeyTopology(SegmentStates);
 }
 
-void FFluidSegment1DCPUSimulation::SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, float SimulationStepTime, bool bWaitForReadbackBeforeLock)
+void FFluidSegment1DCPUSimulation::SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, float SimulationStepTime)
 {
 	const float GravityAcceleration = World ? FMath::Abs(World->GetGravityZ()) : 980.0f;
 	const FVector GravityDirectionWorld = FVector::UpVector;
