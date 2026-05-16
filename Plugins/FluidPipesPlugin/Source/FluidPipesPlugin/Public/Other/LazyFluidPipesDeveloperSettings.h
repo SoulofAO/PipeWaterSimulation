@@ -15,6 +15,14 @@ enum class EFluidLevelPipeImportTarget : uint8
 	Both
 };
 
+UENUM(BlueprintType)
+enum class EFluidSegmentSimulationOneDBackend : uint8
+{
+	CpuGameThread,
+	CpuBackgroundThread,
+	GpuComputeShader
+};
+
 UCLASS(config = FluidPipesPlugin, defaultconfig)
 class FLUIDPIPESPLUGIN_API ULazyFluidPipesDeveloperSettings : public UDeveloperSettings
 {
@@ -79,7 +87,7 @@ public:
 	float OneDSolverCflFactor = 0.9f;
 
 	UPROPERTY(EditAnywhere, Config, Category = "FluidOneD")
-	bool FluidSegmentSimulationOneDUseComputeShader = false;
+	EFluidSegmentSimulationOneDBackend FluidSegmentSimulationOneDBackend = EFluidSegmentSimulationOneDBackend::CpuGameThread;
 
 	UPROPERTY(EditAnywhere, Config, Category = "FluidLevelImport")
 	EFluidLevelPipeImportTarget LevelPipeImportTarget = EFluidLevelPipeImportTarget::Disabled;

@@ -7,6 +7,7 @@
 #include "EngineUtils.h"
 #include "FluidPipesDrawDebug.h"
 #include "FluidPipesWorldDebugText.h"
+#include "HAL/PlatformTime.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 
@@ -69,11 +70,21 @@ void UFluidNetwork0DSubsystem::Tick(float DeltaTime)
 	const bool bEnableFluidNetworkSimulationZeroD = Settings->EnableFluidNetworkSimulationZeroD;
 	if (bEnableFluidNetworkSimulationZeroD)
 	{
+		const bool bPrintSimulationFrameTiming = FluidPipesShouldPrintSimulationFrameTiming();
+		const double FrameStartSeconds = bPrintSimulationFrameTiming ? FPlatformTime::Seconds() : 0.0;
+		int32 SimulationStepCount = 0;
+
 		AccumulatedTime += DeltaTime;
 		while (AccumulatedTime >= Settings->SimulationStepTimeZeroD)
 		{
 			SimulateStep(Settings->SimulationStepTimeZeroD);
 			AccumulatedTime -= Settings->SimulationStepTimeZeroD;
+			++SimulationStepCount;
+		}
+
+		if (FluidPipesShouldDrawZeroDWorldOverlay())
+		{
+			DrawDebugZeroDWorldOverlay();
 		}
 
 		if (FluidPipesShouldEmitScreenDebugMessages())
@@ -81,9 +92,18 @@ void UFluidNetwork0DSubsystem::Tick(float DeltaTime)
 			UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("0D Tick: Nodes={0}, Edges={1}"), { FString::FromInt(NetworkNodeStates.Num()), FString::FromInt(NetworkEdgeStates.Num()) }), true, false, FLinearColor::Green, 0.0f);
 		}
 
-		if (FluidPipesShouldDrawZeroDWorldOverlay())
+		if (bPrintSimulationFrameTiming)
 		{
-			DrawDebugZeroDWorldOverlay();
+			const double ElapsedMilliseconds = (FPlatformTime::Seconds() - FrameStartSeconds) * 1000.0;
+			const FString TimingMessage = FString::Format(
+				TEXT("0D simulation frame: {0} ms | steps={1} | nodes={2} | edges={3}"),
+				{
+					FString::SanitizeFloat(ElapsedMilliseconds),
+					FString::FromInt(SimulationStepCount),
+					FString::FromInt(NetworkNodeStates.Num()),
+					FString::FromInt(NetworkEdgeStates.Num())
+				});
+			FluidPipesPrintSimulationFrameTimingMessage(this, TimingMessage, FLinearColor::Green);
 		}
 	}
 }

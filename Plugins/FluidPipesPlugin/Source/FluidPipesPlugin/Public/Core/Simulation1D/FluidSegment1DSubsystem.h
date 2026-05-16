@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Core/Simulation1D/BaseFluidSegment1DSimulation.h"
 #include "Data/FluidData.h"
+#include "Other/LazyFluidPipesDeveloperSettings.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Templates/UniquePtr.h"
 #include "UObject/WeakObjectPtr.h"
@@ -51,6 +52,11 @@ private:
 	bool IsSegmentStateFinite(const FFluidSegmentStateOneD& SegmentState) const;
 	void DrawDebugOneDSegments(int32 DebugLevel) const;
 	void CollectSegmentIndicesWithinDebugDrawDistance(TArray<int32>& OutSegmentIndices) const;
+	void ReadbackAndDrawOffGameThreadOneDDebug(int32 OneDWorldDebugDetailLevel);
+	void DrawOneDDebugForSegmentIndices(int32 OneDWorldDebugDetailLevel, const TArray<int32>& SegmentIndicesWithinDebugDrawDistance);
+	void EnsureActiveOneDSimulationMatchesSettings(const ULazyFluidPipesDeveloperSettings& Settings);
+	bool UsesOffGameThreadOneDSimulationState() const;
+	static FString BuildOneDSimulationBackendDisplayName(EFluidSegmentSimulationOneDBackend Backend);
 
 	UPROPERTY(EditAnywhere, Category = "FluidOneD")
 	TArray<FFluidSegmentStateOneD> SegmentStates;
@@ -62,5 +68,5 @@ private:
 	float AccumulatedTime = 0.0f;
 
 	TUniquePtr<FBaseFluidSegment1DSimulation> ActiveSimulation;
-	bool bActiveSimulationUsesGpu = false;
+	EFluidSegmentSimulationOneDBackend ActiveOneDSimulationBackend = EFluidSegmentSimulationOneDBackend::CpuGameThread;
 };

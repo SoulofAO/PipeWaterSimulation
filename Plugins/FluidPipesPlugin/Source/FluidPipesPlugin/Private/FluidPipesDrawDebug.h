@@ -2,8 +2,13 @@
 
 #include "CoreMinimal.h"
 
+class UObject;
+struct FLinearColor;
+
 int32 FluidPipesGetDrawDebugLevel();
 bool FluidPipesIsWorldLocationWithinDebugDrawDistance(const UWorld* World, const FVector& WorldLocation);
+bool FluidPipesShouldPrintSimulationFrameTiming();
+void FluidPipesPrintSimulationFrameTimingMessage(UObject* WorldContextObject, const FString& Message, const FLinearColor& TextColor);
 
 FORCEINLINE bool FluidPipesShouldDrawDebug()
 {

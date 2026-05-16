@@ -1,12 +1,56 @@
 #include "Core/Simulation1D/FluidSegment1DCPUSimulation.h"
 
+#include "Async/ParallelFor.h"
 #include "Core/Actors/PipeFluidBasePointActor.h"
-#include "Core/Simulation/FluidSimulationStateLimits.h"
 #include "Core/Actors/PipeFluidPipeActor.h"
+#include "Core/Simulation/FluidSimulationStateLimits.h"
 #include "Core/Simulation1D/FluidSegment1DSimulationLibrary.h"
-#include "Engine/World.h"
-#include "Kismet/KismetSystemLibrary.h"
+#include "HAL/Event.h"
+#include "HAL/PlatformProcess.h"
+#include "HAL/Runnable.h"
+#include "HAL/RunnableThread.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
+
+class FFluidSegment1DCpuWorkerRunnable : public FRunnable
+{
+public:
+	explicit FFluidSegment1DCpuWorkerRunnable(FFluidSegment1DCPUSimulation* InSimulation)
+		: Simulation(InSimulation)
+	{
+	}
+
+	virtual uint32 Run() override
+	{
+		if (Simulation)
+		{
+			Simulation->WorkerThreadMainLoop();
+		}
+		return 0;
+	}
+
+	virtual void Stop() override
+	{
+		if (Simulation)
+		{
+			Simulation->RequestWorkerStop();
+		}
+	}
+
+private:
+	FFluidSegment1DCPUSimulation* Simulation = nullptr;
+};
+
+FFluidSegment1DCPUSimulation::FFluidSegment1DCPUSimulation()
+{
+	StepRequestedEvent = FPlatformProcess::GetSynchEventFromPool(false);
+	StepCompletedEvent = FPlatformProcess::GetSynchEventFromPool(false);
+	StepCompletedEvent->Trigger();
+}
+
+FFluidSegment1DCPUSimulation::~FFluidSegment1DCPUSimulation()
+{
+	Release();
+}
 
 bool FFluidSegment1DCPUSimulation::IsAvailable() const
 {
@@ -15,12 +59,265 @@ bool FFluidSegment1DCPUSimulation::IsAvailable() const
 
 void FFluidSegment1DCPUSimulation::Release()
 {
+	WaitForStepCompletion();
+	StopBackgroundWorker();
 	JunctionSceneNodeKeyToIncidentEndpoints.Reset();
+	{
+		FScopeLock WorkerStateLock(&WorkerStateCriticalSection);
+		WorkerSegmentStates.Reset();
+		SegmentGravityAccelerationAlongAxis.Reset();
+		PendingSimulationStepTimes.Reset();
+		bWorkerStateResident = false;
+	}
+	if (StepRequestedEvent)
+	{
+		FPlatformProcess::ReturnSynchEventToPool(StepRequestedEvent);
+		StepRequestedEvent = nullptr;
+	}
+	if (StepCompletedEvent)
+	{
+		FPlatformProcess::ReturnSynchEventToPool(StepCompletedEvent);
+		StepCompletedEvent = nullptr;
+	}
 }
 
-void FFluidSegment1DCPUSimulation::RebuildFromSegments(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>&)
+void FFluidSegment1DCPUSimulation::ConfigureBackgroundWorker(bool bEnableBackgroundWorker)
+{
+	if (bBackgroundWorkerEnabled == bEnableBackgroundWorker)
+	{
+		return;
+	}
+
+	if (bBackgroundWorkerEnabled)
+	{
+		StopBackgroundWorker();
+	}
+
+	bBackgroundWorkerEnabled = bEnableBackgroundWorker;
+
+	if (bBackgroundWorkerEnabled)
+	{
+		EnsureBackgroundWorkerRunning();
+		StepCompletedEvent->Trigger();
+	}
+}
+
+bool FFluidSegment1DCPUSimulation::UsesBackgroundWorker() const
+{
+	return bBackgroundWorkerEnabled;
+}
+
+bool FFluidSegment1DCPUSimulation::IsWorkerStateResident() const
+{
+	return bWorkerStateResident;
+}
+
+void FFluidSegment1DCPUSimulation::RebuildFromSegments(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors)
+{
+	RebuildFromSegments(SegmentStates, SegmentPipeActors, nullptr);
+}
+
+void FFluidSegment1DCPUSimulation::RebuildFromSegments(const TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, UWorld* SimulationWorld)
 {
 	RebuildJunctionSceneNodeKeyTopology(SegmentStates);
+
+	if (bBackgroundWorkerEnabled)
+	{
+		PublishSegmentStatesToWorker(SegmentStates);
+		BakeWorkerStaticStepInputsOnGameThread(SimulationWorld, SegmentPipeActors);
+	}
+}
+
+void FFluidSegment1DCPUSimulation::PublishSegmentStatesToWorker(const TArray<FFluidSegmentStateOneD>& SegmentStates)
+{
+	WaitForStepCompletion();
+	FScopeLock WorkerStateLock(&WorkerStateCriticalSection);
+	WorkerSegmentStates = SegmentStates;
+	RebuildJunctionSceneNodeKeyTopology(WorkerSegmentStates);
+	bWorkerStateResident = WorkerSegmentStates.Num() > 0;
+}
+
+void FFluidSegment1DCPUSimulation::BakeWorkerStaticStepInputsOnGameThread(UWorld* SimulationWorld, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors)
+{
+	if (!bBackgroundWorkerEnabled)
+	{
+		return;
+	}
+
+	const float GravityAcceleration = SimulationWorld ? FMath::Abs(SimulationWorld->GetGravityZ()) : 980.0f;
+	const FVector GravityDirectionWorld = FVector::UpVector;
+
+	FScopeLock WorkerStateLock(&WorkerStateCriticalSection);
+	if (!bWorkerStateResident)
+	{
+		return;
+	}
+
+	SegmentGravityAccelerationAlongAxis.SetNum(WorkerSegmentStates.Num());
+	for (int32 SegmentIndex = 0; SegmentIndex < WorkerSegmentStates.Num(); ++SegmentIndex)
+	{
+		float GravityAxisComponent = 0.0f;
+		if (SegmentPipeActors.IsValidIndex(SegmentIndex))
+		{
+			if (const APipeFluidPipeActor* PipeActor = SegmentPipeActors[SegmentIndex].Get())
+			{
+				const FVector PipeAxisDirectionWorld = PipeActor->GetActorForwardVector().GetSafeNormal();
+				GravityAxisComponent = FVector::DotProduct(GravityDirectionWorld, PipeAxisDirectionWorld);
+			}
+		}
+		SegmentGravityAccelerationAlongAxis[SegmentIndex] = GravityAcceleration * GravityAxisComponent;
+	}
+}
+
+void FFluidSegment1DCPUSimulation::EnqueueSimulateStepCpuOnly(float SimulationStepTime)
+{
+	{
+		FScopeLock WorkerStateLock(&WorkerStateCriticalSection);
+		PendingSimulationStepTimes.Add(SimulationStepTime);
+		StepCompletedEvent->Reset();
+	}
+	EnsureBackgroundWorkerRunning();
+	StepRequestedEvent->Trigger();
+}
+
+void FFluidSegment1DCPUSimulation::WaitForStepCompletion()
+{
+	if (!bBackgroundWorkerEnabled || !StepCompletedEvent)
+	{
+		return;
+	}
+	StepCompletedEvent->Wait();
+}
+
+void FFluidSegment1DCPUSimulation::ReadbackToSegmentStates(TArray<FFluidSegmentStateOneD>& SegmentStates)
+{
+	WaitForStepCompletion();
+	FScopeLock WorkerStateLock(&WorkerStateCriticalSection);
+	SegmentStates = WorkerSegmentStates;
+}
+
+void FFluidSegment1DCPUSimulation::ReadbackSegmentIndicesToSegmentStates(TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<int32>& SegmentIndices)
+{
+	WaitForStepCompletion();
+	FScopeLock WorkerStateLock(&WorkerStateCriticalSection);
+	for (const int32 SegmentIndex : SegmentIndices)
+	{
+		if (WorkerSegmentStates.IsValidIndex(SegmentIndex) && SegmentStates.IsValidIndex(SegmentIndex))
+		{
+			SegmentStates[SegmentIndex] = WorkerSegmentStates[SegmentIndex];
+		}
+	}
+}
+
+float FFluidSegment1DCPUSimulation::ComputeMinimumStableStepTimeOnWorker(float RequestedSimulationStepTime)
+{
+	FScopeLock WorkerStateLock(&WorkerStateCriticalSection);
+	float EffectiveStepTime = RequestedSimulationStepTime;
+	for (const FFluidSegmentStateOneD& SegmentState : WorkerSegmentStates)
+	{
+		EffectiveStepTime = FMath::Min(EffectiveStepTime, ComputeStableStepTime(SegmentState));
+	}
+	return EffectiveStepTime;
+}
+
+void FFluidSegment1DCPUSimulation::RunWorkerSimulationStep(float RequestedSimulationStepTime)
+{
+	FScopeLock WorkerStateLock(&WorkerStateCriticalSection);
+	if (!bWorkerStateResident)
+	{
+		return;
+	}
+	float EffectiveStepTime = RequestedSimulationStepTime;
+	for (const FFluidSegmentStateOneD& SegmentState : WorkerSegmentStates)
+	{
+		EffectiveStepTime = FMath::Min(EffectiveStepTime, ComputeStableStepTime(SegmentState));
+	}
+	SimulateStepOnSegmentStates(WorkerSegmentStates, SegmentGravityAccelerationAlongAxis, EffectiveStepTime);
+}
+
+void FFluidSegment1DCPUSimulation::ProcessWorkerStepQueueUntilIdle()
+{
+	for (;;)
+	{
+		float RequestedSimulationStepTime = 0.0f;
+		{
+			FScopeLock WorkerStateLock(&WorkerStateCriticalSection);
+			if (PendingSimulationStepTimes.Num() == 0)
+			{
+				StepCompletedEvent->Trigger();
+				return;
+			}
+			RequestedSimulationStepTime = PendingSimulationStepTimes[0];
+			PendingSimulationStepTimes.RemoveAt(0, 1, EAllowShrinking::No);
+		}
+		RunWorkerSimulationStep(RequestedSimulationStepTime);
+	}
+}
+
+void FFluidSegment1DCPUSimulation::RequestWorkerStop()
+{
+	bWorkerStopRequested = true;
+	if (StepRequestedEvent)
+	{
+		StepRequestedEvent->Trigger();
+	}
+}
+
+void FFluidSegment1DCPUSimulation::WorkerThreadMainLoop()
+{
+	while (!bWorkerStopRequested)
+	{
+		StepRequestedEvent->Wait();
+		if (bWorkerStopRequested)
+		{
+			break;
+		}
+		ProcessWorkerStepQueueUntilIdle();
+	}
+}
+
+void FFluidSegment1DCPUSimulation::StopBackgroundWorker()
+{
+	RequestWorkerStop();
+
+	if (WorkerThread)
+	{
+		WorkerThread->WaitForCompletion();
+		delete WorkerThread;
+		WorkerThread = nullptr;
+	}
+
+	if (WorkerRunnable)
+	{
+		delete WorkerRunnable;
+		WorkerRunnable = nullptr;
+	}
+
+	bWorkerStopRequested = false;
+}
+
+void FFluidSegment1DCPUSimulation::EnsureBackgroundWorkerRunning()
+{
+	if (!bBackgroundWorkerEnabled)
+	{
+		return;
+	}
+
+	if (!StepRequestedEvent)
+	{
+		StepRequestedEvent = FPlatformProcess::GetSynchEventFromPool(false);
+		StepCompletedEvent = FPlatformProcess::GetSynchEventFromPool(false);
+		StepCompletedEvent->Trigger();
+	}
+
+	if (WorkerThread)
+	{
+		return;
+	}
+
+	bWorkerStopRequested = false;
+	WorkerRunnable = new FFluidSegment1DCpuWorkerRunnable(this);
+	WorkerThread = FRunnableThread::Create(WorkerRunnable, TEXT("FluidSegment1DCpuWorker"), 0, TPri_Normal);
 }
 
 void FFluidSegment1DCPUSimulation::SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, float SimulationStepTime)
@@ -31,43 +328,57 @@ void FFluidSegment1DCPUSimulation::SimulateStep(UWorld* World, TArray<FFluidSegm
 	UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors(SegmentStates, SegmentPipeActors);
 	RebuildJunctionSceneNodeKeyTopology(SegmentStates);
 
-	TArray<FFluidSegmentStateOneD> NextSegmentStates;
-	NextSegmentStates.SetNum(SegmentStates.Num());
+	TArray<float> GravityAccelerationAlongAxis;
+	GravityAccelerationAlongAxis.SetNum(SegmentStates.Num());
 	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
 	{
-		FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
-		if (SegmentState.CellStates.Num() < 2)
-		{
-			NextSegmentStates[SegmentIndex] = SegmentState;
-			continue;
-		}
-
-		const float StableStepTime = ComputeStableStepTime(SegmentState);
-		const float EffectiveStepTime = FMath::Min(SimulationStepTime, StableStepTime);
-
 		float GravityAxisComponent = 0.0f;
 		if (SegmentPipeActors.IsValidIndex(SegmentIndex))
 		{
-			const APipeFluidPipeActor* PipeActor = SegmentPipeActors[SegmentIndex].Get();
-			if (PipeActor)
+			if (const APipeFluidPipeActor* PipeActor = SegmentPipeActors[SegmentIndex].Get())
 			{
 				const FVector PipeAxisDirectionWorld = PipeActor->GetActorForwardVector().GetSafeNormal();
 				GravityAxisComponent = FVector::DotProduct(GravityDirectionWorld, PipeAxisDirectionWorld);
 			}
 		}
-
-		const float GravityAccelerationAlongAxis = GravityAcceleration * GravityAxisComponent;
-		FFluidSegmentStateOneD NextSegmentState = SegmentState;
-		SolveSegmentWaterHammerStep(SegmentState, EffectiveStepTime, GravityAccelerationAlongAxis, NextSegmentState);
-		ApplyBoundaryConditions(SegmentState, NextSegmentState);
-		NextSegmentStates[SegmentIndex] = MoveTemp(NextSegmentState);
+		GravityAccelerationAlongAxis[SegmentIndex] = GravityAcceleration * GravityAxisComponent;
 	}
 
-	ApplyJunctionCouplingToNextSegmentStates(SegmentStates, NextSegmentStates);
+	SimulateStepOnSegmentStates(SegmentStates, GravityAccelerationAlongAxis, SimulationStepTime);
+}
 
-	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+void FFluidSegment1DCPUSimulation::SimulateStepOnSegmentStates(TArray<FFluidSegmentStateOneD>& TargetSegmentStates, const TArray<float>& GravityAccelerationAlongAxisPerSegment, float SimulationStepTime)
+{
+	TArray<FFluidSegmentStateOneD> NextSegmentStates;
+	NextSegmentStates.SetNum(TargetSegmentStates.Num());
+
+	const int32 SegmentCount = TargetSegmentStates.Num();
+	ParallelFor(SegmentCount, [this, &TargetSegmentStates, &NextSegmentStates, &GravityAccelerationAlongAxisPerSegment, SimulationStepTime](int32 SegmentIndex)
+		{
+			const FFluidSegmentStateOneD& SegmentState = TargetSegmentStates[SegmentIndex];
+			if (SegmentState.CellStates.Num() < 2)
+			{
+				NextSegmentStates[SegmentIndex] = SegmentState;
+				return;
+			}
+
+			const float StableStepTime = ComputeStableStepTime(SegmentState);
+			const float EffectiveStepTime = FMath::Min(SimulationStepTime, StableStepTime);
+			const float GravityAccelerationAlongAxis = GravityAccelerationAlongAxisPerSegment.IsValidIndex(SegmentIndex)
+				? GravityAccelerationAlongAxisPerSegment[SegmentIndex]
+				: 0.0f;
+
+			FFluidSegmentStateOneD NextSegmentState = SegmentState;
+			SolveSegmentWaterHammerStep(SegmentState, EffectiveStepTime, GravityAccelerationAlongAxis, NextSegmentState);
+			ApplyBoundaryConditions(SegmentState, NextSegmentState);
+			NextSegmentStates[SegmentIndex] = MoveTemp(NextSegmentState);
+		});
+
+	ApplyJunctionCouplingToNextSegmentStates(TargetSegmentStates, NextSegmentStates);
+
+	for (int32 SegmentIndex = 0; SegmentIndex < TargetSegmentStates.Num(); ++SegmentIndex)
 	{
-		FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+		FFluidSegmentStateOneD& SegmentState = TargetSegmentStates[SegmentIndex];
 		FFluidSegmentStateOneD& NextSegmentState = NextSegmentStates[SegmentIndex];
 		UpdateDerivedCellValues(NextSegmentState);
 		if (!IsSegmentStateFinite(NextSegmentState))
@@ -78,7 +389,7 @@ void FFluidSegment1DCPUSimulation::SimulateStep(UWorld* World, TArray<FFluidSegm
 	}
 
 	const ULazyFluidPipesDeveloperSettings* Settings = GetDefault<ULazyFluidPipesDeveloperSettings>();
-	FFluidSimulationStateLimits::ClampAllSegmentStatesOneD(SegmentStates, *Settings);
+	FFluidSimulationStateLimits::ClampAllSegmentStatesOneD(TargetSegmentStates, *Settings);
 }
 
 void FFluidSegment1DCPUSimulation::UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors(TArray<FFluidSegmentStateOneD>& TargetSegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors) const

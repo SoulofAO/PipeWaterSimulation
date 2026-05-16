@@ -1,6 +1,8 @@
 #include "FluidPipesDrawDebug.h"
 
 #include "HAL/IConsoleManager.h"
+#include "HAL/PlatformTime.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -14,6 +16,12 @@ static TAutoConsoleVariable<int32> GFluidPipesDrawDebugLevel(
 	TEXT("FluidPipes.DrawDebug"),
 	0,
 	TEXT("0 off. 1+: 0D overlay and PrintString. 1D text detail by level (1=summary+ends, 2+=cells). World text: Project Settings / FluidPipes / FluidPipesWorldDebug (distance, toggles)."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> GFluidPipesPrintSimulationFrameTiming(
+	TEXT("FluidPipes.PrintSimulationFrameTiming"),
+	0,
+	TEXT("0 off. 1: print 0D and 1D simulation subsystem frame processing time to screen and log each tick."),
 	ECVF_Default);
 
 int32 FluidPipesGetDrawDebugLevel()
@@ -58,4 +66,14 @@ bool FluidPipesIsWorldLocationWithinDebugDrawDistance(const UWorld* World, const
 	}
 
 	return FVector::DistSquared(WorldLocation, ViewLocationWorld) <= FMath::Square(MaximumDistanceCentimeters);
+}
+
+bool FluidPipesShouldPrintSimulationFrameTiming()
+{
+	return GFluidPipesPrintSimulationFrameTiming.GetValueOnGameThread() != 0;
+}
+
+void FluidPipesPrintSimulationFrameTimingMessage(UObject* WorldContextObject, const FString& Message, const FLinearColor& TextColor)
+{
+	UKismetSystemLibrary::PrintString(WorldContextObject, Message, true, true, TextColor, 0.0f);
 }
