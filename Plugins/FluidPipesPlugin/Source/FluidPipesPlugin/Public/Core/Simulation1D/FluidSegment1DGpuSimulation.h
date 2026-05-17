@@ -24,6 +24,8 @@ public:
 
 	void SimulateStepGpuOnly(float SimulationStepTime);
 
+	void WaitForGpuStepCompletion();
+
 	void ReadbackSegmentIndicesToSegmentStates(TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<int32>& SegmentIndices);
 
 	bool IsGpuStateResident() const;
@@ -101,9 +103,12 @@ private:
 	FUnorderedAccessViewRHIRef FlowGpuBufferAUav;
 	FUnorderedAccessViewRHIRef FlowGpuBufferBUav;
 
+	FGPUFenceRHIRef GpuStepCompletionFence;
+
 	bool bResourcesAllocated = false;
 	bool bGpuStateResident = false;
 	bool bReadFromBufferA = true;
+	bool bGpuStepCompletionFenceWritten = false;
 
 	bool bEnableOneDStateVariableClamping = false;
 	float OneDMinimumPressure = 0.0f;

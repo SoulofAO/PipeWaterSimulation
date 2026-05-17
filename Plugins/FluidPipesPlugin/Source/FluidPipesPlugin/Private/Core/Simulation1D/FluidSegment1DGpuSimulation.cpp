@@ -8,6 +8,8 @@
 #include "Core/Simulation1D/FluidSegment1DGpuTypes.h"
 #include "Data/FluidData.h"
 #include "Engine/World.h"
+#include "HAL/PlatformProcess.h"
+#include "HAL/PlatformTime.h"
 #include "GlobalShader.h"
 #include "Math/UnrealMathUtility.h"
 #include "RHICommandList.h"
@@ -285,6 +287,8 @@ void FFluidSegment1DGpuSimulation::Release()
 void FFluidSegment1DGpuSimulation::ReleaseInternal()
 {
 	PartialReadbackResources.Reset();
+	GpuStepCompletionFence.SafeRelease();
+	bGpuStepCompletionFenceWritten = false;
 	bGpuStateResident = false;
 	ENQUEUE_RENDER_COMMAND(FluidSegment1DGpuRelease)(
 		[this](FRHICommandListImmediate& ImmediateCommands)
@@ -820,6 +824,7 @@ void FFluidSegment1DGpuSimulation::SimulateStepGpuOnly(float SimulationStepTime)
 {
 	if (!bResourcesAllocated || !bGpuStateResident || TotalCellsGlobal == 0u || !IsAvailable())
 	{
+		bGpuStepCompletionFenceWritten = false;
 		return;
 	}
 
@@ -828,8 +833,38 @@ void FFluidSegment1DGpuSimulation::SimulateStepGpuOnly(float SimulationStepTime)
 		[this, SimulationStepTime, bReadFromA](FRHICommandListImmediate& ImmediateCommands)
 		{
 			DispatchGpuSimulationStep(ImmediateCommands, SimulationStepTime, bReadFromA);
+			if (!GpuStepCompletionFence.IsValid())
+			{
+				GpuStepCompletionFence = RHICreateGPUFence(TEXT("FluidSegment1DGpuStepCompletionFence"));
+			}
+			GpuStepCompletionFence->Clear();
+			ImmediateCommands.WriteGPUFence(GpuStepCompletionFence);
 		});
+	bGpuStepCompletionFenceWritten = true;
 	bReadFromBufferA = !bReadFromA;
+}
+
+void FFluidSegment1DGpuSimulation::WaitForGpuStepCompletion()
+{
+	if (!bGpuStepCompletionFenceWritten || !GpuStepCompletionFence.IsValid())
+	{
+		return;
+	}
+
+	FlushRenderingCommands();
+
+	const double WaitStartSeconds = FPlatformTime::Seconds();
+	const double WaitTimeoutSeconds = 30.0;
+	while (FPlatformTime::Seconds() - WaitStartSeconds <= WaitTimeoutSeconds)
+	{
+		if (GpuStepCompletionFence->NumPendingWriteCommands.GetValue() == 0 && GpuStepCompletionFence->Poll())
+		{
+			return;
+		}
+		FPlatformProcess::SleepNoStats(0.0f);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("Fluid 1D GPU step completion wait timed out after 30 seconds."));
 }
 
 void FFluidSegment1DGpuSimulation::SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, const float SimulationStepTime)

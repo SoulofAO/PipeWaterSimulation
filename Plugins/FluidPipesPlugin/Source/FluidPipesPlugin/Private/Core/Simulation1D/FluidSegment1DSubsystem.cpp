@@ -150,7 +150,7 @@ void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegm
 
 bool UFluidSegment1DSubsystem::UsesOffGameThreadOneDSimulationState() const
 {
-	return ActiveOneDSimulationBackend == EFluidSegmentSimulationOneDBackend::GpuComputeShader
+	return FluidSegmentSimulationOneDUsesGpuComputeBackend(ActiveOneDSimulationBackend)
 		|| ActiveOneDSimulationBackend == EFluidSegmentSimulationOneDBackend::CpuBackgroundThread;
 }
 
@@ -160,6 +160,8 @@ FString UFluidSegment1DSubsystem::BuildOneDSimulationBackendDisplayName(EFluidSe
 	{
 	case EFluidSegmentSimulationOneDBackend::GpuComputeShader:
 		return TEXT("GPU");
+	case EFluidSegmentSimulationOneDBackend::GpuComputeShaderSynchronous:
+		return TEXT("GPU-Sync");
 	case EFluidSegmentSimulationOneDBackend::CpuBackgroundThread:
 		return TEXT("CPU-Background");
 	default:
@@ -180,7 +182,7 @@ void UFluidSegment1DSubsystem::RebuildActiveSimulationForCurrentSettings()
 void UFluidSegment1DSubsystem::EnsureActiveOneDSimulationMatchesSettings(const ULazyFluidPipesDeveloperSettings& Settings)
 {
 	EFluidSegmentSimulationOneDBackend ResolvedBackend = Settings.FluidSegmentSimulationOneDBackend;
-	if (ResolvedBackend == EFluidSegmentSimulationOneDBackend::GpuComputeShader)
+	if (FluidSegmentSimulationOneDUsesGpuComputeBackend(ResolvedBackend))
 	{
 		const TUniquePtr<FFluidSegment1DGpuSimulation> GpuAvailabilityProbe = MakeUnique<FFluidSegment1DGpuSimulation>();
 		if (!GpuAvailabilityProbe->IsAvailable())
@@ -189,10 +191,12 @@ void UFluidSegment1DSubsystem::EnsureActiveOneDSimulationMatchesSettings(const U
 		}
 	}
 
-	const bool bNeedsGpuImplementation = ResolvedBackend == EFluidSegmentSimulationOneDBackend::GpuComputeShader;
+	const bool bNeedsGpuImplementation = FluidSegmentSimulationOneDUsesGpuComputeBackend(ResolvedBackend);
+	const bool bActiveUsesGpuImplementation = FluidSegmentSimulationOneDUsesGpuComputeBackend(ActiveOneDSimulationBackend);
 
-	if (ResolvedBackend == ActiveOneDSimulationBackend && ActiveSimulation)
+	if (bNeedsGpuImplementation == bActiveUsesGpuImplementation && ActiveSimulation)
 	{
+		ActiveOneDSimulationBackend = ResolvedBackend;
 		if (!bNeedsGpuImplementation)
 		{
 			FFluidSegment1DCPUSimulation* CpuSimulation = static_cast<FFluidSegment1DCPUSimulation*>(ActiveSimulation.Get());
@@ -290,7 +294,7 @@ void UFluidSegment1DSubsystem::ReadbackAndDrawOffGameThreadOneDDebug(int32 OneDW
 		return;
 	}
 
-	if (ActiveOneDSimulationBackend == EFluidSegmentSimulationOneDBackend::GpuComputeShader)
+	if (FluidSegmentSimulationOneDUsesGpuComputeBackend(ActiveOneDSimulationBackend))
 	{
 		if (FFluidSegment1DGpuSimulation* GpuSimulation = static_cast<FFluidSegment1DGpuSimulation*>(ActiveSimulation.Get()))
 		{
@@ -476,6 +480,7 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 	switch (ActiveOneDSimulationBackend)
 	{
 	case EFluidSegmentSimulationOneDBackend::GpuComputeShader:
+	case EFluidSegmentSimulationOneDBackend::GpuComputeShaderSynchronous:
 	{
 		float GpuEffectiveStepTime = SimulationStepTime;
 		for (const FFluidSegmentStateOneD& SegmentState : SegmentStates)
@@ -489,6 +494,10 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 		if (FFluidSegment1DGpuSimulation* GpuSimulation = static_cast<FFluidSegment1DGpuSimulation*>(ActiveSimulation.Get()))
 		{
 			GpuSimulation->SimulateStepGpuOnly(GpuEffectiveStepTime);
+			if (FluidSegmentSimulationOneDRequiresGpuStepCompletionWait(ActiveOneDSimulationBackend))
+			{
+				GpuSimulation->WaitForGpuStepCompletion();
+			}
 		}
 		break;
 	}
