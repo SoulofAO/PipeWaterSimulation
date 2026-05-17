@@ -1,10 +1,10 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Core/Actors/PipeFluidBasePointActor.h"
 #include "GameFramework/Actor.h"
 #include "PipeFluidBenchmarkNetworkActor.generated.h"
 
-class APipeFluidBasePointActor;
 class APipeFluidConsumerActor;
 class APipeFluidPipeActor;
 class APipeFluidPointActor;
@@ -46,6 +46,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidBenchmark", meta = (ClampMin = "2", UIMin = "2"))
 	int32 PipeSimulationCellCount = 12;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidBenchmark", meta = (Tooltip = "When any count is greater than zero, points from this map are placed on random grid cells. Remaining cells use PointActorClass. Empty map keeps the legacy placement heuristic."))
+	TMap<TSubclassOf<APipeFluidBasePointActor>, int32> BenchmarkPointCountsByClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidBenchmark", meta = (Tooltip = "Random seed for BenchmarkPointCountsByClass placement. Zero uses a new seed on each build."))
+	int32 BenchmarkPointPlacementRandomSeed = 0;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidBenchmark")
 	float SourceVolumeFlowRate = 0.015f;
 
@@ -69,6 +75,11 @@ public:
 private:
 	void SpawnBenchmarkPoints(TArray<APipeFluidBasePointActor*>& SpawnedPoints);
 	void SpawnBenchmarkPipes(const TArray<APipeFluidBasePointActor*>& SpawnedPoints);
+	void ConfigureSpawnedBenchmarkPoint(APipeFluidBasePointActor* PointActor) const;
+	TSubclassOf<APipeFluidBasePointActor> ResolveLegacyBenchmarkPointClass(int32 PointIndexX, int32 PointIndexY, int32 BenchmarkGridSizeX, int32 BenchmarkGridSizeY) const;
+	bool UsesBenchmarkPointCountMap() const;
+	void BuildBenchmarkPointClassQueue(TArray<TSubclassOf<APipeFluidBasePointActor>>& OutPointClassQueue) const;
+	void BuildRandomizedBenchmarkPointClassGrid(TArray<TSubclassOf<APipeFluidBasePointActor>>& OutGridPointClasses, int32 TotalGridPointCount) const;
 	FVector BuildPointLocation(int32 PointIndexX, int32 PointIndexY) const;
 	int32 BuildPointArrayIndex(int32 PointIndexX, int32 PointIndexY, int32 BenchmarkGridSizeY) const;
 
