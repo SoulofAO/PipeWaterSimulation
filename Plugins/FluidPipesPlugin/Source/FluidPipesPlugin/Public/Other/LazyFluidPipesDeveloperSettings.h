@@ -21,6 +21,15 @@ public:
 	bool ZeroDMergeColinearPassiveJunctionAtImport = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidZeroD")
+	bool ZeroDAutoDeriveLumpedParametersFromPipePhysics = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidZeroD", meta = (ClampMin = "1", UIMin = "1", ClampMax = "8", UIMax = "8"))
+	int32 ZeroDFixedPointIterationCount = 3;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidZeroD", meta = (ClampMin = "0.01", UIMin = "0.01", ClampMax = "1.0", UIMax = "1.0"))
+	float ZeroDSubstepSafetyFactor = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidZeroD")
 	bool EnableZeroDSimulationStateVariableClamping = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidZeroD")

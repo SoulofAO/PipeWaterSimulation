@@ -41,6 +41,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidPipeScenePhysics")
 	float Density = 1000.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidPipeScenePhysics")
+	bool bUseManualZeroDimensionEdgeParameters = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidPipeScenePhysics", meta = (ClampMin = "0.000001", UIMin = "0.000001"))
 	float EdgeResistance = 1.0f;
 

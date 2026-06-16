@@ -4,6 +4,8 @@
 
 struct FFluidSegment1DSimulationLibrary
 {
+	static constexpr int32 MaximumOneDimensionSubstepCount = 16;
+
 	static float PressureSampleNearBoundaryForJunctionCoupling(const TArray<FFluidSegmentCellStateOneD>& CellStates, bool bLeftEndpoint)
 	{
 		const int32 CellCount = CellStates.Num();
@@ -25,4 +27,10 @@ struct FFluidSegment1DSimulationLibrary
 		}
 		return CellStates[CellCount - 2].Pressure;
 	}
+
+	static void AdvanceInteriorWaterHammerLaxFriedrichsStep(
+		const FFluidSegmentStateOneD& CurrentSegmentState,
+		float SimulationStepTime,
+		float GravityAccelerationAlongAxisMetersPerSecondSquared,
+		FFluidSegmentStateOneD& NextSegmentState);
 };

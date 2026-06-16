@@ -51,6 +51,9 @@ public:
 	UPROPERTY(EditAnywhere, Category = "FluidBenchmark|Timing", meta = (ClampMin = "0.1", UIMin = "0.1"))
 	float MeasurementDurationSeconds = 5.0f;
 
+	UPROPERTY(EditAnywhere, Category = "FluidBenchmark|Physics")
+	bool bLogZeroDOneDPhysicsComparisonAfterEachPair = true;
+
 	UFUNCTION(BlueprintCallable, Category = "FluidBenchmark")
 	void StopSimulationSettingsBenchmark();
 

@@ -75,6 +75,12 @@ struct FFluidNetworkEdgeStateZeroD
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidZeroD")
 	float FlowRate = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidZeroD", meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float FromNodeFluidComplianceContribution = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidZeroD", meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float ToNodeFluidComplianceContribution = 0.0f;
 };
 
 USTRUCT(BlueprintType)

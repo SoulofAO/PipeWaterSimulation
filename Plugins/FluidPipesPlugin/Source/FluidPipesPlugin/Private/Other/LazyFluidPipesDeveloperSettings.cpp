@@ -5,6 +5,9 @@ void ULazyFluidPipesDeveloperSettings::CopyFrom(const ULazyFluidPipesDeveloperSe
 	ProfileLabel = SourceSettings.ProfileLabel;
 	EnableFluidNetworkSimulationZeroD = SourceSettings.EnableFluidNetworkSimulationZeroD;
 	ZeroDMergeColinearPassiveJunctionAtImport = SourceSettings.ZeroDMergeColinearPassiveJunctionAtImport;
+	ZeroDAutoDeriveLumpedParametersFromPipePhysics = SourceSettings.ZeroDAutoDeriveLumpedParametersFromPipePhysics;
+	ZeroDFixedPointIterationCount = SourceSettings.ZeroDFixedPointIterationCount;
+	ZeroDSubstepSafetyFactor = SourceSettings.ZeroDSubstepSafetyFactor;
 	EnableZeroDSimulationStateVariableClamping = SourceSettings.EnableZeroDSimulationStateVariableClamping;
 	ZeroDMinimumPressure = SourceSettings.ZeroDMinimumPressure;
 	ZeroDMaximumPressure = SourceSettings.ZeroDMaximumPressure;

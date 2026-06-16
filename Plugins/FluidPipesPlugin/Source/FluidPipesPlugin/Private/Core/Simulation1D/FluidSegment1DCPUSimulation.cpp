@@ -3,6 +3,7 @@
 #include "Async/ParallelFor.h"
 #include "Core/Actors/PipeFluidBasePointActor.h"
 #include "Core/Actors/PipeFluidPipeActor.h"
+#include "Core/Simulation/FluidPipeLumpedPhysicsLibrary.h"
 #include "Core/Simulation/FluidSimulationStateLimits.h"
 #include "Core/Simulation1D/FluidSegment1DSimulationLibrary.h"
 #include "HAL/Event.h"
@@ -150,7 +151,8 @@ void FFluidSegment1DCPUSimulation::BakeWorkerStaticStepInputsOnGameThread(UWorld
 		return;
 	}
 
-	const float GravityAcceleration = SimulationWorld ? FMath::Abs(SimulationWorld->GetGravityZ()) : 980.0f;
+	const float GravityAccelerationMetersPerSecondSquared = FFluidPipeLumpedPhysicsLibrary::ConvertGravityAccelerationCentimetersPerSecondSquaredToMetersPerSecondSquared(
+		SimulationWorld ? FMath::Abs(SimulationWorld->GetGravityZ()) : 980.0f);
 	const FVector GravityDirectionWorld = FVector::UpVector;
 
 	FScopeLock WorkerStateLock(&WorkerStateCriticalSection);
@@ -171,7 +173,7 @@ void FFluidSegment1DCPUSimulation::BakeWorkerStaticStepInputsOnGameThread(UWorld
 				GravityAxisComponent = FVector::DotProduct(GravityDirectionWorld, PipeAxisDirectionWorld);
 			}
 		}
-		SegmentGravityAccelerationAlongAxis[SegmentIndex] = GravityAcceleration * GravityAxisComponent;
+		SegmentGravityAccelerationAlongAxis[SegmentIndex] = GravityAccelerationMetersPerSecondSquared * GravityAxisComponent;
 	}
 }
 
@@ -233,12 +235,7 @@ void FFluidSegment1DCPUSimulation::RunWorkerSimulationStep(float RequestedSimula
 	{
 		return;
 	}
-	float EffectiveStepTime = RequestedSimulationStepTime;
-	for (const FFluidSegmentStateOneD& SegmentState : WorkerSegmentStates)
-	{
-		EffectiveStepTime = FMath::Min(EffectiveStepTime, ComputeStableStepTime(SegmentState));
-	}
-	SimulateStepOnSegmentStates(WorkerSegmentStates, SegmentGravityAccelerationAlongAxis, EffectiveStepTime);
+	SimulateStepOnSegmentStates(WorkerSegmentStates, SegmentGravityAccelerationAlongAxis, RequestedSimulationStepTime);
 }
 
 void FFluidSegment1DCPUSimulation::ProcessWorkerStepQueueUntilIdle()
@@ -328,7 +325,8 @@ void FFluidSegment1DCPUSimulation::EnsureBackgroundWorkerRunning()
 
 void FFluidSegment1DCPUSimulation::SimulateStep(UWorld* World, TArray<FFluidSegmentStateOneD>& SegmentStates, const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& SegmentPipeActors, float SimulationStepTime)
 {
-	const float GravityAcceleration = World ? FMath::Abs(World->GetGravityZ()) : 980.0f;
+	const float GravityAccelerationMetersPerSecondSquared = FFluidPipeLumpedPhysicsLibrary::ConvertGravityAccelerationCentimetersPerSecondSquaredToMetersPerSecondSquared(
+		World ? FMath::Abs(World->GetGravityZ()) : 980.0f);
 	const FVector GravityDirectionWorld = FVector::UpVector;
 
 	UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors(SegmentStates, SegmentPipeActors);
@@ -347,7 +345,7 @@ void FFluidSegment1DCPUSimulation::SimulateStep(UWorld* World, TArray<FFluidSegm
 				GravityAxisComponent = FVector::DotProduct(GravityDirectionWorld, PipeAxisDirectionWorld);
 			}
 		}
-		GravityAccelerationAlongAxis[SegmentIndex] = GravityAcceleration * GravityAxisComponent;
+		GravityAccelerationAlongAxis[SegmentIndex] = GravityAccelerationMetersPerSecondSquared * GravityAxisComponent;
 	}
 
 	SimulateStepOnSegmentStates(SegmentStates, GravityAccelerationAlongAxis, SimulationStepTime);
@@ -358,40 +356,54 @@ void FFluidSegment1DCPUSimulation::SimulateStepOnSegmentStates(TArray<FFluidSegm
 	TArray<FFluidSegmentStateOneD> NextSegmentStates;
 	NextSegmentStates.SetNum(TargetSegmentStates.Num());
 
-	const int32 SegmentCount = TargetSegmentStates.Num();
-	ParallelFor(SegmentCount, [this, &TargetSegmentStates, &NextSegmentStates, &GravityAccelerationAlongAxisPerSegment, SimulationStepTime](int32 SegmentIndex)
+	float RemainingSimulationStepTime = SimulationStepTime;
+	for (int32 SubstepIndex = 0; SubstepIndex < FFluidSegment1DSimulationLibrary::MaximumOneDimensionSubstepCount && RemainingSimulationStepTime > KINDA_SMALL_NUMBER; ++SubstepIndex)
+	{
+		float SubstepTime = RemainingSimulationStepTime;
+		for (const FFluidSegmentStateOneD& SegmentState : TargetSegmentStates)
 		{
-			const FFluidSegmentStateOneD& SegmentState = TargetSegmentStates[SegmentIndex];
-			if (SegmentState.CellStates.Num() < 2)
+			if (SegmentState.CellStates.Num() >= 2)
 			{
-				NextSegmentStates[SegmentIndex] = SegmentState;
-				return;
+				SubstepTime = FMath::Min(SubstepTime, ComputeStableStepTime(SegmentState));
 			}
+		}
 
-			const float StableStepTime = ComputeStableStepTime(SegmentState);
-			const float EffectiveStepTime = FMath::Min(SimulationStepTime, StableStepTime);
-			const float GravityAccelerationAlongAxis = GravityAccelerationAlongAxisPerSegment.IsValidIndex(SegmentIndex)
-				? GravityAccelerationAlongAxisPerSegment[SegmentIndex]
-				: 0.0f;
+		const int32 SegmentCount = TargetSegmentStates.Num();
+		ParallelFor(SegmentCount, [this, &TargetSegmentStates, &NextSegmentStates, &GravityAccelerationAlongAxisPerSegment, SubstepTime](int32 SegmentIndex)
+			{
+				const FFluidSegmentStateOneD& SegmentState = TargetSegmentStates[SegmentIndex];
+				if (SegmentState.CellStates.Num() < 2)
+				{
+					NextSegmentStates[SegmentIndex] = SegmentState;
+					return;
+				}
 
-			FFluidSegmentStateOneD NextSegmentState = SegmentState;
-			SolveSegmentWaterHammerStep(SegmentState, EffectiveStepTime, GravityAccelerationAlongAxis, NextSegmentState);
-			ApplyBoundaryConditions(SegmentState, NextSegmentState);
-			NextSegmentStates[SegmentIndex] = MoveTemp(NextSegmentState);
-		});
+				const float GravityAccelerationAlongAxis = GravityAccelerationAlongAxisPerSegment.IsValidIndex(SegmentIndex)
+					? GravityAccelerationAlongAxisPerSegment[SegmentIndex]
+					: 0.0f;
 
-	ApplyJunctionCouplingToNextSegmentStates(TargetSegmentStates, NextSegmentStates);
+				FFluidSegmentStateOneD NextSegmentState = SegmentState;
+				SolveSegmentWaterHammerStep(SegmentState, SubstepTime, GravityAccelerationAlongAxis, NextSegmentState);
+				ApplyBoundaryConditions(SegmentState, NextSegmentState);
+				NextSegmentStates[SegmentIndex] = MoveTemp(NextSegmentState);
+			});
+
+		ApplyJunctionCouplingToNextSegmentStates(TargetSegmentStates, NextSegmentStates);
+
+		for (int32 SegmentIndex = 0; SegmentIndex < TargetSegmentStates.Num(); ++SegmentIndex)
+		{
+			if (IsSegmentStateFinite(NextSegmentStates[SegmentIndex]))
+			{
+				TargetSegmentStates[SegmentIndex] = MoveTemp(NextSegmentStates[SegmentIndex]);
+			}
+		}
+
+		RemainingSimulationStepTime -= SubstepTime;
+	}
 
 	for (int32 SegmentIndex = 0; SegmentIndex < TargetSegmentStates.Num(); ++SegmentIndex)
 	{
-		FFluidSegmentStateOneD& SegmentState = TargetSegmentStates[SegmentIndex];
-		FFluidSegmentStateOneD& NextSegmentState = NextSegmentStates[SegmentIndex];
-		UpdateDerivedCellValues(NextSegmentState);
-		if (!IsSegmentStateFinite(NextSegmentState))
-		{
-			continue;
-		}
-		SegmentState = MoveTemp(NextSegmentState);
+		UpdateDerivedCellValues(TargetSegmentStates[SegmentIndex]);
 	}
 
 	const ULazyFluidPipesDeveloperSettings& Settings = BoundSimulationSettings
@@ -539,31 +551,11 @@ void FFluidSegment1DCPUSimulation::ApplyJunctionCouplingToNextSegmentStates(cons
 
 void FFluidSegment1DCPUSimulation::SolveSegmentWaterHammerStep(const FFluidSegmentStateOneD& CurrentSegmentState, float SimulationStepTime, float GravityAccelerationAlongAxis, FFluidSegmentStateOneD& NextSegmentState) const
 {
-	const float CrossSectionArea = GetCrossSectionArea(CurrentSegmentState);
-	const float SafeDensity = FMath::Max(CurrentSegmentState.Density, KINDA_SMALL_NUMBER);
-	const float SafeWaveSpeed = FMath::Max(CurrentSegmentState.WaveSpeed, 1.0f);
-	const float SafeCellLength = FMath::Max(CurrentSegmentState.CellLength, 0.01f);
-	const float FrictionResistance = CurrentSegmentState.FrictionFactor / (2.0f * FMath::Max(CurrentSegmentState.PipeDiameter, 0.001f) * FMath::Max(CrossSectionArea, KINDA_SMALL_NUMBER));
-	const float PressureCoefficient = SafeDensity * SafeWaveSpeed * SafeWaveSpeed / FMath::Max(CrossSectionArea, KINDA_SMALL_NUMBER);
-	const float GravitySourceTerm = -CrossSectionArea * GravityAccelerationAlongAxis;
-
-	NextSegmentState.CellStates = CurrentSegmentState.CellStates;
-	for (int32 CellIndex = 1; CellIndex < CurrentSegmentState.CellStates.Num() - 1; ++CellIndex)
-	{
-		const float LeftFlow = CurrentSegmentState.CellStates[CellIndex - 1].FlowRate;
-		const float CenterFlow = CurrentSegmentState.CellStates[CellIndex].FlowRate;
-		const float RightFlow = CurrentSegmentState.CellStates[CellIndex + 1].FlowRate;
-		const float LeftPressure = CurrentSegmentState.CellStates[CellIndex - 1].Pressure;
-		const float CenterPressure = CurrentSegmentState.CellStates[CellIndex].Pressure;
-		const float RightPressure = CurrentSegmentState.CellStates[CellIndex + 1].Pressure;
-		const float FlowGradient = (RightFlow - LeftFlow) / (2.0f * SafeCellLength);
-		const float PressureGradient = (RightPressure - LeftPressure) / (2.0f * SafeCellLength);
-		const float FlowDerivative = -(CrossSectionArea / SafeDensity) * PressureGradient - FrictionResistance * CenterFlow * FMath::Abs(CenterFlow) + GravitySourceTerm;
-		const float PressureDerivative = -PressureCoefficient * FlowGradient;
-
-		NextSegmentState.CellStates[CellIndex].FlowRate = CenterFlow + FlowDerivative * SimulationStepTime;
-		NextSegmentState.CellStates[CellIndex].Pressure = CenterPressure + PressureDerivative * SimulationStepTime;
-	}
+	FFluidSegment1DSimulationLibrary::AdvanceInteriorWaterHammerLaxFriedrichsStep(
+		CurrentSegmentState,
+		SimulationStepTime,
+		GravityAccelerationAlongAxis,
+		NextSegmentState);
 }
 
 void FFluidSegment1DCPUSimulation::ApplyBoundaryConditions(const FFluidSegmentStateOneD& CurrentSegmentState, FFluidSegmentStateOneD& NextSegmentState) const
@@ -620,8 +612,10 @@ float FFluidSegment1DCPUSimulation::ComputeStableStepTime(const FFluidSegmentSta
 		? *BoundSimulationSettings
 		: FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(nullptr);
 	const float SafeWaveSpeed = FMath::Max(SegmentState.WaveSpeed, 1.0f);
-	const float SafeCellLength = FMath::Max(SegmentState.CellLength, 0.01f);
-	return Settings.OneDSolverCflFactor * SafeCellLength / SafeWaveSpeed;
+	return FFluidPipeLumpedPhysicsLibrary::ComputeOneDimensionStableStepTimeSeconds(
+		SegmentState.CellLength,
+		SafeWaveSpeed,
+		Settings.OneDSolverCflFactor);
 }
 
 float FFluidSegment1DCPUSimulation::GetCrossSectionArea(const FFluidSegmentStateOneD& SegmentState) const

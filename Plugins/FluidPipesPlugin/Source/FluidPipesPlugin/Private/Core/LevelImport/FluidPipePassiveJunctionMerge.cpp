@@ -364,12 +364,27 @@ void FFluidPipePassiveJunctionMerge::MergeColinearZeroDEdges(TArray<FFluidNetwor
 				continue;
 			}
 
+			const auto ResolveOuterNodeComplianceContribution = [](const FFluidNetworkEdgeStateZeroD& EdgeState, int32 OuterNodeIndex) -> float
+			{
+				if (EdgeState.FromNodeIndex == OuterNodeIndex)
+				{
+					return EdgeState.FromNodeFluidComplianceContribution;
+				}
+				if (EdgeState.ToNodeIndex == OuterNodeIndex)
+				{
+					return EdgeState.ToNodeFluidComplianceContribution;
+				}
+				return 0.0f;
+			};
+
 			FFluidNetworkEdgeStateZeroD MergedEdge;
 			MergedEdge.FromNodeIndex = OuterNodeIndexFirst;
 			MergedEdge.ToNodeIndex = OuterNodeIndexSecond;
 			MergedEdge.Resistance = FirstEdge.Resistance + SecondEdge.Resistance;
 			MergedEdge.Inertance = FirstEdge.Inertance + SecondEdge.Inertance;
 			MergedEdge.FlowRate = 0.5f * (FirstEdge.FlowRate + SecondEdge.FlowRate);
+			MergedEdge.FromNodeFluidComplianceContribution = ResolveOuterNodeComplianceContribution(FirstEdge, OuterNodeIndexFirst);
+			MergedEdge.ToNodeFluidComplianceContribution = ResolveOuterNodeComplianceContribution(SecondEdge, OuterNodeIndexSecond);
 
 			const int32 RemoveEdgeIndexHigh = FMath::Max(IncidentEdgeIndices[0], IncidentEdgeIndices[1]);
 			const int32 RemoveEdgeIndexLow = FMath::Min(IncidentEdgeIndices[0], IncidentEdgeIndices[1]);

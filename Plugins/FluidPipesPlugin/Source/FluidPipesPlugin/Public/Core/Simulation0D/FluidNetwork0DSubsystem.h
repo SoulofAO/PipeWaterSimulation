@@ -5,6 +5,8 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "FluidNetwork0DSubsystem.generated.h"
 
+class ULazyFluidPipesDeveloperSettings;
+
 UCLASS()
 class FLUIDPIPESPLUGIN_API UFluidNetwork0DSubsystem : public UTickableWorldSubsystem
 {
@@ -28,10 +30,13 @@ public:
 
 private:
 	void SimulateStep(float SimulationStepTime);
+	void SimulateStepInternal(float SimulationStepTime, const ULazyFluidPipesDeveloperSettings& Settings);
 	void RefreshNetworkNodeExternalFlowsFromWorldPointActors();
-	void UpdateEdgeFlows(float SimulationStepTime);
+	void UpdateEdgeFlows(float SimulationStepTime, bool bUseQuadraticFrictionFromPipePhysics);
 	void IntegrateNodeVolumes(float SimulationStepTime);
 	void UpdateNodePressures();
+	void RecalculateNodeComplianceFromEdges(bool bAutoDeriveLumpedParametersFromPipePhysics);
+	float ComputeMaximumStableSubstepTime(const ULazyFluidPipesDeveloperSettings& Settings) const;
 	void DrawDebugZeroDWorldOverlay() const;
 
 	UPROPERTY(EditAnywhere, Category = "FluidZeroD")

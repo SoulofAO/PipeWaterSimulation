@@ -40,20 +40,18 @@ void FluidSegment1DInteriorMain(uint3 DispatchThreadId : SV_DispatchThreadId)
 	const float FrictionResistance = FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 11u);
 	const float PressureCoefficient = FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 12u);
 	const float GravitySourceTerm = FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 13u);
-	const float SafeCellLength = max(CellLength, 0.01f);
+	const float SafeCellLength = max(CellLength, 0.0001f);
 
 	const float LeftFlow = CurrentFlow[GlobalLeft];
 	const float CenterFlow = CurrentFlow[GlobalCenter];
 	const float RightFlow = CurrentFlow[GlobalRight];
 	const float LeftPressure = CurrentPressure[GlobalLeft];
-	const float CenterPressure = CurrentPressure[GlobalCenter];
 	const float RightPressure = CurrentPressure[GlobalRight];
 
-	const float FlowGradient = (RightFlow - LeftFlow) / (2.0f * SafeCellLength);
-	const float PressureGradient = (RightPressure - LeftPressure) / (2.0f * SafeCellLength);
-	const float FlowDerivative = -(CrossSectionArea / SafeDensity) * PressureGradient - FrictionResistance * CenterFlow * abs(CenterFlow) + GravitySourceTerm;
-	const float PressureDerivative = -PressureCoefficient * FlowGradient;
+	const float PressureCouplingFactor = PressureCoefficient * SimulationStepTime / (2.0f * SafeCellLength);
+	const float FlowCouplingFactor = (CrossSectionArea / SafeDensity) * SimulationStepTime / (2.0f * SafeCellLength);
+	const float FrictionSourceTerm = -FrictionResistance * CenterFlow * abs(CenterFlow) + GravitySourceTerm;
 
-	NextFlow[GlobalCenter] = CenterFlow + FlowDerivative * SimulationStepTime;
-	NextPressure[GlobalCenter] = CenterPressure + PressureDerivative * SimulationStepTime;
+	NextPressure[GlobalCenter] = 0.5f * (LeftPressure + RightPressure) - PressureCouplingFactor * (RightFlow - LeftFlow);
+	NextFlow[GlobalCenter] = 0.5f * (LeftFlow + RightFlow) - FlowCouplingFactor * (RightPressure - LeftPressure) + SimulationStepTime * FrictionSourceTerm;
 }

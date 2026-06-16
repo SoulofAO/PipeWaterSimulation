@@ -2,6 +2,7 @@
 
 #include "Core/Actors/PipeFluidBasePointActor.h"
 #include "Core/Actors/PipeFluidPipeActor.h"
+#include "Core/Simulation/FluidPipeLumpedPhysicsLibrary.h"
 #include "Core/Simulation0D/FluidNetwork0DSubsystem.h"
 #include "Core/Simulation1D/FluidSegment1DSubsystem.h"
 #include "Engine/World.h"
@@ -54,6 +55,8 @@ static void ImportFluidActorsIntoZeroDSubsystem(UWorld* World)
 	}
 
 	TArray<FFluidNetworkEdgeStateZeroD> Edges;
+	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(World);
+	const bool bAutoDeriveLumpedParameters = Settings.ZeroDAutoDeriveLumpedParametersFromPipePhysics;
 	for (TActorIterator<APipeFluidPipeActor> Iterator(World); Iterator; ++Iterator)
 	{
 		APipeFluidPipeActor* PipeActor = *Iterator;
@@ -80,9 +83,25 @@ static void ImportFluidActorsIntoZeroDSubsystem(UWorld* World)
 		FFluidNetworkEdgeStateZeroD EdgeState;
 		EdgeState.FromNodeIndex = *FromNodeIndex;
 		EdgeState.ToNodeIndex = *ToNodeIndex;
-		EdgeState.Resistance = PipeActor->EdgeResistance;
-		EdgeState.Inertance = PipeActor->EdgeInertance;
 		EdgeState.FlowRate = PipeActor->EdgeInitialFlowRate;
+
+		if (bAutoDeriveLumpedParameters && !PipeActor->bUseManualZeroDimensionEdgeParameters)
+		{
+			const FFluidPipeLumpedPhysicsProperties LumpedProperties = FFluidPipeLumpedPhysicsLibrary::DeriveLumpedPropertiesFromPipeActor(*PipeActor);
+			EdgeState.Resistance = LumpedProperties.FrictionQuadraticCoefficient * FMath::Max(PipeActor->EdgeResistance, KINDA_SMALL_NUMBER);
+			EdgeState.Inertance = LumpedProperties.PipeInertance * FMath::Max(PipeActor->EdgeInertance, 0.0f);
+			const float HalfPipeFluidCompliance = LumpedProperties.PipeFluidCompliance * 0.5f;
+			EdgeState.FromNodeFluidComplianceContribution = HalfPipeFluidCompliance;
+			EdgeState.ToNodeFluidComplianceContribution = HalfPipeFluidCompliance;
+		}
+		else
+		{
+			EdgeState.Resistance = PipeActor->EdgeResistance;
+			EdgeState.Inertance = PipeActor->EdgeInertance;
+			EdgeState.FromNodeFluidComplianceContribution = 0.0f;
+			EdgeState.ToNodeFluidComplianceContribution = 0.0f;
+		}
+
 		Edges.Add(EdgeState);
 	}
 

@@ -3,6 +3,7 @@
 #include "Core/Actors/PipeFluidBasePointActor.h"
 #include "Core/Actors/PipeFluidPipeActor.h"
 #include "Core/LevelImport/FluidPipePassiveJunctionMerge.h"
+#include "Core/Simulation/FluidPipeLumpedPhysicsLibrary.h"
 #include "Core/Simulation/FluidSimulationStateLimits.h"
 #include "Core/Simulation1D/FluidSegment1DCPUSimulation.h"
 #include "Core/Simulation1D/FluidSegment1DGpuSimulation.h"
@@ -482,21 +483,26 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 	case EFluidSegmentSimulationOneDBackend::GpuComputeShader:
 	case EFluidSegmentSimulationOneDBackend::GpuComputeShaderSynchronous:
 	{
-		float GpuEffectiveStepTime = SimulationStepTime;
-		for (const FFluidSegmentStateOneD& SegmentState : SegmentStates)
-		{
-			GpuEffectiveStepTime = FMath::Min(GpuEffectiveStepTime, ComputeStableStepTime(SegmentState));
-		}
-		if (FluidPipesShouldEmitScreenDebugMessages() && SimulationStepTime > GpuEffectiveStepTime + KINDA_SMALL_NUMBER)
-		{
-			UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D GPU CFL Limited: Requested={0}, Effective={1}"), { FString::SanitizeFloat(SimulationStepTime), FString::SanitizeFloat(GpuEffectiveStepTime) }), true, true, FLinearColor::Yellow, 0.0f);
-		}
 		if (FFluidSegment1DGpuSimulation* GpuSimulation = static_cast<FFluidSegment1DGpuSimulation*>(ActiveSimulation.Get()))
 		{
-			GpuSimulation->SimulateStepGpuOnly(GpuEffectiveStepTime);
-			if (FluidSegmentSimulationOneDRequiresGpuStepCompletionWait(ActiveOneDSimulationBackend))
+			float RemainingSimulationStepTime = SimulationStepTime;
+			for (int32 SubstepIndex = 0; SubstepIndex < FFluidSegment1DSimulationLibrary::MaximumOneDimensionSubstepCount && RemainingSimulationStepTime > KINDA_SMALL_NUMBER; ++SubstepIndex)
 			{
-				GpuSimulation->WaitForGpuStepCompletion();
+				float SubstepTime = RemainingSimulationStepTime;
+				for (const FFluidSegmentStateOneD& SegmentState : SegmentStates)
+				{
+					SubstepTime = FMath::Min(SubstepTime, ComputeStableStepTime(SegmentState));
+				}
+				if (FluidPipesShouldEmitScreenDebugMessages() && RemainingSimulationStepTime > SubstepTime + KINDA_SMALL_NUMBER)
+				{
+					UKismetSystemLibrary::PrintString(this, FString::Format(TEXT("1D GPU CFL Limited: Requested={0}, Effective={1}"), { FString::SanitizeFloat(RemainingSimulationStepTime), FString::SanitizeFloat(SubstepTime) }), true, true, FLinearColor::Yellow, 0.0f);
+				}
+				GpuSimulation->SimulateStepGpuOnly(SubstepTime);
+				if (FluidSegmentSimulationOneDRequiresGpuStepCompletionWait(ActiveOneDSimulationBackend))
+				{
+					GpuSimulation->WaitForGpuStepCompletion();
+				}
+				RemainingSimulationStepTime -= SubstepTime;
 			}
 		}
 		break;
@@ -520,31 +526,11 @@ void UFluidSegment1DSubsystem::SimulateStep(float SimulationStepTime)
 
 void UFluidSegment1DSubsystem::SolveSegmentWaterHammerStep(const FFluidSegmentStateOneD& CurrentSegmentState, float SimulationStepTime, float GravityAccelerationAlongAxis, FFluidSegmentStateOneD& NextSegmentState) const
 {
-	const float CrossSectionArea = GetCrossSectionArea(CurrentSegmentState);
-	const float SafeDensity = FMath::Max(CurrentSegmentState.Density, KINDA_SMALL_NUMBER);
-	const float SafeWaveSpeed = FMath::Max(CurrentSegmentState.WaveSpeed, 1.0f);
-	const float SafeCellLength = FMath::Max(CurrentSegmentState.CellLength, 0.01f);
-	const float FrictionResistance = CurrentSegmentState.FrictionFactor / (2.0f * FMath::Max(CurrentSegmentState.PipeDiameter, 0.001f) * FMath::Max(CrossSectionArea, KINDA_SMALL_NUMBER));
-	const float PressureCoefficient = SafeDensity * SafeWaveSpeed * SafeWaveSpeed / FMath::Max(CrossSectionArea, KINDA_SMALL_NUMBER);
-	const float GravitySourceTerm = -CrossSectionArea * GravityAccelerationAlongAxis;
-
-	NextSegmentState.CellStates = CurrentSegmentState.CellStates;
-	for (int32 CellIndex = 1; CellIndex < CurrentSegmentState.CellStates.Num() - 1; ++CellIndex)
-	{
-		const float LeftFlow = CurrentSegmentState.CellStates[CellIndex - 1].FlowRate;
-		const float CenterFlow = CurrentSegmentState.CellStates[CellIndex].FlowRate;
-		const float RightFlow = CurrentSegmentState.CellStates[CellIndex + 1].FlowRate;
-		const float LeftPressure = CurrentSegmentState.CellStates[CellIndex - 1].Pressure;
-		const float CenterPressure = CurrentSegmentState.CellStates[CellIndex].Pressure;
-		const float RightPressure = CurrentSegmentState.CellStates[CellIndex + 1].Pressure;
-		const float FlowGradient = (RightFlow - LeftFlow) / (2.0f * SafeCellLength);
-		const float PressureGradient = (RightPressure - LeftPressure) / (2.0f * SafeCellLength);
-		const float FlowDerivative = -(CrossSectionArea / SafeDensity) * PressureGradient - FrictionResistance * CenterFlow * FMath::Abs(CenterFlow) + GravitySourceTerm;
-		const float PressureDerivative = -PressureCoefficient * FlowGradient;
-
-		NextSegmentState.CellStates[CellIndex].FlowRate = CenterFlow + FlowDerivative * SimulationStepTime;
-		NextSegmentState.CellStates[CellIndex].Pressure = CenterPressure + PressureDerivative * SimulationStepTime;
-	}
+	FFluidSegment1DSimulationLibrary::AdvanceInteriorWaterHammerLaxFriedrichsStep(
+		CurrentSegmentState,
+		SimulationStepTime,
+		GravityAccelerationAlongAxis,
+		NextSegmentState);
 }
 
 void UFluidSegment1DSubsystem::ApplyBoundaryConditions(const FFluidSegmentStateOneD& CurrentSegmentState, FFluidSegmentStateOneD& NextSegmentState) const
@@ -602,8 +588,10 @@ float UFluidSegment1DSubsystem::ComputeStableStepTime(const FFluidSegmentStateOn
 {
 	const ULazyFluidPipesDeveloperSettings& Settings = GetSimulationSettings();
 	const float SafeWaveSpeed = FMath::Max(SegmentState.WaveSpeed, 1.0f);
-	const float SafeCellLength = FMath::Max(SegmentState.CellLength, 0.01f);
-	return Settings.OneDSolverCflFactor * SafeCellLength / SafeWaveSpeed;
+	return FFluidPipeLumpedPhysicsLibrary::ComputeOneDimensionStableStepTimeSeconds(
+		SegmentState.CellLength,
+		SafeWaveSpeed,
+		Settings.OneDSolverCflFactor);
 }
 
 float UFluidSegment1DSubsystem::GetCrossSectionArea(const FFluidSegmentStateOneD& SegmentState) const

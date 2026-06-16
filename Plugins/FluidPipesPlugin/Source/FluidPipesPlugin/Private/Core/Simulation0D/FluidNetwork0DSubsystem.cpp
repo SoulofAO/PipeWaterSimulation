@@ -2,6 +2,7 @@
 
 #include "Core/Actors/PipeFluidBasePointActor.h"
 #include "Core/LevelImport/FluidPipePassiveJunctionMerge.h"
+#include "Core/Simulation/FluidPipeLumpedPhysicsLibrary.h"
 #include "Core/Simulation/FluidSimulationStateLimits.h"
 #include "DrawDebugHelpers.h"
 #include "EngineUtils.h"
@@ -148,17 +149,110 @@ void UFluidNetwork0DSubsystem::ApplyImportedZeroDNetwork(const TArray<FFluidNetw
 	{
 		FFluidPipePassiveJunctionMerge::MergeColinearZeroDEdges(NetworkNodeStates, NetworkEdgeStates, GetWorld());
 	}
+	RecalculateNodeComplianceFromEdges(Settings.ZeroDAutoDeriveLumpedParametersFromPipePhysics);
 	AccumulatedTime = 0.0f;
+}
+
+void UFluidNetwork0DSubsystem::RecalculateNodeComplianceFromEdges(bool bAutoDeriveLumpedParametersFromPipePhysics)
+{
+	if (!bAutoDeriveLumpedParametersFromPipePhysics)
+	{
+		return;
+	}
+
+	for (FFluidNetworkNodeStateZeroD& NetworkNodeState : NetworkNodeStates)
+	{
+		NetworkNodeState.Compliance = 0.0f;
+	}
+
+	for (const FFluidNetworkEdgeStateZeroD& NetworkEdgeState : NetworkEdgeStates)
+	{
+		if (NetworkNodeStates.IsValidIndex(NetworkEdgeState.FromNodeIndex))
+		{
+			NetworkNodeStates[NetworkEdgeState.FromNodeIndex].Compliance += NetworkEdgeState.FromNodeFluidComplianceContribution;
+		}
+
+		if (NetworkNodeStates.IsValidIndex(NetworkEdgeState.ToNodeIndex))
+		{
+			NetworkNodeStates[NetworkEdgeState.ToNodeIndex].Compliance += NetworkEdgeState.ToNodeFluidComplianceContribution;
+		}
+	}
+
+	for (FFluidNetworkNodeStateZeroD& NetworkNodeState : NetworkNodeStates)
+	{
+		if (NetworkNodeState.Compliance <= KINDA_SMALL_NUMBER)
+		{
+			NetworkNodeState.Compliance = 1.0f;
+		}
+	}
 }
 
 void UFluidNetwork0DSubsystem::SimulateStep(float SimulationStepTime)
 {
-	RefreshNetworkNodeExternalFlowsFromWorldPointActors();
-	UpdateEdgeFlows(SimulationStepTime);
-	IntegrateNodeVolumes(SimulationStepTime);
-	UpdateNodePressures();
 	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
+	float RemainingSimulationStepTime = SimulationStepTime;
+	const int32 MaximumSubstepCount = 8;
+	for (int32 SubstepIndex = 0; SubstepIndex < MaximumSubstepCount && RemainingSimulationStepTime > KINDA_SMALL_NUMBER; ++SubstepIndex)
+	{
+		const float MaximumStableSubstepTime = ComputeMaximumStableSubstepTime(Settings);
+		const float SubstepTime = FMath::Min(RemainingSimulationStepTime, MaximumStableSubstepTime);
+		SimulateStepInternal(SubstepTime, Settings);
+		RemainingSimulationStepTime -= SubstepTime;
+	}
+}
+
+void UFluidNetwork0DSubsystem::SimulateStepInternal(float SimulationStepTime, const ULazyFluidPipesDeveloperSettings& Settings)
+{
+	RefreshNetworkNodeExternalFlowsFromWorldPointActors();
+	const bool bUseQuadraticFrictionFromPipePhysics = Settings.ZeroDAutoDeriveLumpedParametersFromPipePhysics;
+	const int32 FixedPointIterationCount = FMath::Clamp(Settings.ZeroDFixedPointIterationCount, 1, 8);
+
+	for (int32 IterationIndex = 0; IterationIndex < FixedPointIterationCount; ++IterationIndex)
+	{
+		UpdateEdgeFlows(SimulationStepTime, bUseQuadraticFrictionFromPipePhysics);
+		if (IterationIndex + 1 == FixedPointIterationCount)
+		{
+			IntegrateNodeVolumes(SimulationStepTime);
+		}
+		UpdateNodePressures();
+	}
+
 	FFluidSimulationStateLimits::ClampAllNetworkStatesZeroD(NetworkNodeStates, NetworkEdgeStates, Settings);
+}
+
+float UFluidNetwork0DSubsystem::ComputeMaximumStableSubstepTime(const ULazyFluidPipesDeveloperSettings& Settings) const
+{
+	float MinimumStableSubstepTime = Settings.SimulationStepTimeZeroD;
+	const float SubstepSafetyFactor = FMath::Clamp(Settings.ZeroDSubstepSafetyFactor, 0.01f, 1.0f);
+
+	for (const FFluidNetworkEdgeStateZeroD& NetworkEdgeState : NetworkEdgeStates)
+	{
+		if (NetworkEdgeState.Inertance > KINDA_SMALL_NUMBER)
+		{
+			const float InertialSubstepTime = SubstepSafetyFactor * NetworkEdgeState.Inertance / FMath::Max(NetworkEdgeState.Resistance, KINDA_SMALL_NUMBER);
+			MinimumStableSubstepTime = FMath::Min(MinimumStableSubstepTime, InertialSubstepTime);
+		}
+
+		const float EffectiveLinearResistance = FFluidPipeLumpedPhysicsLibrary::ComputeEffectiveLinearResistanceFromQuadraticCoefficient(
+			NetworkEdgeState.Resistance,
+			NetworkEdgeState.FlowRate);
+
+		if (NetworkNodeStates.IsValidIndex(NetworkEdgeState.FromNodeIndex))
+		{
+			const float SafeCompliance = FMath::Max(NetworkNodeStates[NetworkEdgeState.FromNodeIndex].Compliance, KINDA_SMALL_NUMBER);
+			const float CapacitiveSubstepTime = SubstepSafetyFactor * SafeCompliance * EffectiveLinearResistance;
+			MinimumStableSubstepTime = FMath::Min(MinimumStableSubstepTime, CapacitiveSubstepTime);
+		}
+
+		if (NetworkNodeStates.IsValidIndex(NetworkEdgeState.ToNodeIndex))
+		{
+			const float SafeCompliance = FMath::Max(NetworkNodeStates[NetworkEdgeState.ToNodeIndex].Compliance, KINDA_SMALL_NUMBER);
+			const float CapacitiveSubstepTime = SubstepSafetyFactor * SafeCompliance * EffectiveLinearResistance;
+			MinimumStableSubstepTime = FMath::Min(MinimumStableSubstepTime, CapacitiveSubstepTime);
+		}
+	}
+
+	return FMath::Max(MinimumStableSubstepTime, KINDA_SMALL_NUMBER);
 }
 
 void UFluidNetwork0DSubsystem::RefreshNetworkNodeExternalFlowsFromWorldPointActors()
@@ -185,7 +279,7 @@ void UFluidNetwork0DSubsystem::RefreshNetworkNodeExternalFlowsFromWorldPointActo
 	}
 }
 
-void UFluidNetwork0DSubsystem::UpdateEdgeFlows(float SimulationStepTime)
+void UFluidNetwork0DSubsystem::UpdateEdgeFlows(float SimulationStepTime, bool bUseQuadraticFrictionFromPipePhysics)
 {
 	for (FFluidNetworkEdgeStateZeroD& NetworkEdgeState : NetworkEdgeStates)
 	{
@@ -196,6 +290,14 @@ void UFluidNetwork0DSubsystem::UpdateEdgeFlows(float SimulationStepTime)
 		}
 
 		const float PressureDifference = NetworkNodeStates[NetworkEdgeState.FromNodeIndex].Pressure - NetworkNodeStates[NetworkEdgeState.ToNodeIndex].Pressure;
+		if (bUseQuadraticFrictionFromPipePhysics && NetworkEdgeState.Inertance <= KINDA_SMALL_NUMBER)
+		{
+			NetworkEdgeState.FlowRate = FFluidPipeLumpedPhysicsLibrary::ComputeVolumeFlowRateFromQuadraticPressureDrop(
+				PressureDifference,
+				NetworkEdgeState.Resistance);
+			continue;
+		}
+
 		if (NetworkEdgeState.Inertance > KINDA_SMALL_NUMBER)
 		{
 			const float FlowRateDerivative = (PressureDifference - NetworkEdgeState.Resistance * NetworkEdgeState.FlowRate) / NetworkEdgeState.Inertance;
@@ -235,13 +337,11 @@ void UFluidNetwork0DSubsystem::IntegrateNodeVolumes(float SimulationStepTime)
 
 void UFluidNetwork0DSubsystem::UpdateNodePressures()
 {
-	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
-	const float SafePressureScale = FMath::Max(Settings.ZeroDPressureScale, KINDA_SMALL_NUMBER);
 	for (FFluidNetworkNodeStateZeroD& NetworkNodeState : NetworkNodeStates)
 	{
 		const float SafeCompliance = FMath::Max(NetworkNodeState.Compliance, KINDA_SMALL_NUMBER);
 		const float PressureFromStoredVolume = (NetworkNodeState.StoredVolume - NetworkNodeState.ReferenceVolume) / SafeCompliance;
-		NetworkNodeState.Pressure = NetworkNodeState.ReferencePressure + PressureFromStoredVolume * SafePressureScale;
+		NetworkNodeState.Pressure = NetworkNodeState.ReferencePressure + PressureFromStoredVolume;
 	}
 }
 
@@ -299,15 +399,16 @@ void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
 		return;
 	}
 
-	float MinimumPressure = NetworkNodeStates[0].Pressure;
-	float MaximumPressure = MinimumPressure;
+	float MinimumDisplayPressure = NetworkNodeStates[0].Pressure * WorldDebugSettings.ZeroDPressureScale;
+	float MaximumDisplayPressure = MinimumDisplayPressure;
 	for (const FFluidNetworkNodeStateZeroD& NetworkNodeState : NetworkNodeStates)
 	{
-		MinimumPressure = FMath::Min(MinimumPressure, NetworkNodeState.Pressure);
-		MaximumPressure = FMath::Max(MaximumPressure, NetworkNodeState.Pressure);
+		const float DisplayPressureSample = NetworkNodeState.Pressure * WorldDebugSettings.ZeroDPressureScale;
+		MinimumDisplayPressure = FMath::Min(MinimumDisplayPressure, DisplayPressureSample);
+		MaximumDisplayPressure = FMath::Max(MaximumDisplayPressure, DisplayPressureSample);
 	}
 
-	const float PressureSpan = FMath::Max(MaximumPressure - MinimumPressure, KINDA_SMALL_NUMBER);
+	const float DisplayPressureSpan = FMath::Max(MaximumDisplayPressure - MinimumDisplayPressure, KINDA_SMALL_NUMBER);
 
 	for (int32 NodeIndex = 0; NodeIndex < NetworkNodeStates.Num(); ++NodeIndex)
 	{
@@ -317,7 +418,8 @@ void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
 			continue;
 		}
 		const FFluidNetworkNodeStateZeroD& NetworkNodeState = NetworkNodeStates[NodeIndex];
-		const float NormalizedPressure = FMath::Clamp((NetworkNodeState.Pressure - MinimumPressure) / PressureSpan, 0.0f, 1.0f);
+		const float DisplayPressure = NetworkNodeState.Pressure * WorldDebugSettings.ZeroDPressureScale;
+		const float NormalizedPressure = FMath::Clamp((DisplayPressure - MinimumDisplayPressure) / DisplayPressureSpan, 0.0f, 1.0f);
 		const FColor PressureDebugColor = FLinearColor::LerpUsingHSV(FLinearColor::Blue, FLinearColor::Red, NormalizedPressure).ToFColor(true);
 		if (DrawZeroDWireGeometry)
 		{

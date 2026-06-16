@@ -3,6 +3,7 @@
 #include "Core/Actors/PipeFluidBenchmarkNetworkActor.h"
 #include "Core/LazyFluidPipeSubsystem.h"
 #include "Core/LevelImport/FluidPipeLevelImportSubsystem.h"
+#include "Core/Simulation/FluidPipeZeroDOneDPhysicsComparison.h"
 #include "Core/Simulation0D/FluidNetwork0DSubsystem.h"
 #include "Engine/World.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
@@ -209,6 +210,11 @@ void APipeFluidSimulationSettingsBenchmarkActor::FinishCurrentBenchmarkPairMeasu
 	Result.FrameSampleCount = SampleCount;
 
 	BenchmarkResults.Add(Result);
+
+	if (bLogZeroDOneDPhysicsComparisonAfterEachPair)
+	{
+		FFluidPipeZeroDOneDPhysicsComparison::LogComparisonReport(World);
+	}
 
 	++CurrentProfileIndex;
 	if (CurrentProfileIndex >= SimulationSettingsProfiles.Num())

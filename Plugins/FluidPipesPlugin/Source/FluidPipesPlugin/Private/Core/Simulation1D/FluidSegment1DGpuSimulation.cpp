@@ -16,6 +16,7 @@
 #include "RHIResourceUtils.h"
 #include "RHIUtilities.h"
 #include "RenderGraphUtils.h"
+#include "Core/Simulation/FluidPipeLumpedPhysicsLibrary.h"
 #include "Core/Simulation/FluidSimulationStateLimits.h"
 #include "Other/FluidPipesSimulationSettingsLibrary.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
@@ -393,7 +394,11 @@ void FFluidSegment1DGpuSimulation::BakeSegmentUintTableAtImport(const TArray<FFl
 		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::RightBoundaryPressure, SegmentState.RightBoundaryPressure);
 		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::LeftBoundaryFlowUpload, SegmentState.LeftBoundaryFlow);
 		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::RightBoundaryFlowUpload, SegmentState.RightBoundaryFlow);
-		FluidSegment1DWriteFloatToUintTable(SegmentUintTableCpu, SegmentIndex, FluidSegment1DGpuFieldIndex::CellLength, SegmentState.CellLength);
+		FluidSegment1DWriteFloatToUintTable(
+			SegmentUintTableCpu,
+			SegmentIndex,
+			FluidSegment1DGpuFieldIndex::CellLength,
+			FFluidPipeLumpedPhysicsLibrary::ComputeOneDimensionCellLengthMeters(SegmentState.CellLength));
 
 		const float CrossSectionArea = FluidSegment1DComputeCrossSectionArea(SegmentState);
 		const float SafeDensity = FMath::Max(SegmentState.Density, KINDA_SMALL_NUMBER);
@@ -606,8 +611,9 @@ void FFluidSegment1DGpuSimulation::RebuildFromSegments(const TArray<FFluidSegmen
 
 	SegmentUintTableCpu.SetNumZeroed(static_cast<int32>(SegmentCount * FluidSegment1DGpuFieldIndex::UIntsPerSegment));
 
-	const float GravityAcceleration = SimulationWorld ? FMath::Abs(SimulationWorld->GetGravityZ()) : 980.0f;
-	BakeSegmentUintTableAtImport(SegmentStates, SegmentPipeActors, GravityAcceleration);
+	const float GravityAccelerationMetersPerSecondSquared = FFluidPipeLumpedPhysicsLibrary::ConvertGravityAccelerationCentimetersPerSecondSquaredToMetersPerSecondSquared(
+		SimulationWorld ? FMath::Abs(SimulationWorld->GetGravityZ()) : 980.0f);
+	BakeSegmentUintTableAtImport(SegmentStates, SegmentPipeActors, GravityAccelerationMetersPerSecondSquared);
 	BuildJunctionGpuWorkLists(SegmentStates);
 
 	if (InteriorWorkPackedCpu.Num() == 0)
