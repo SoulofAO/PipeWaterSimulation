@@ -17,8 +17,8 @@ enum class EFluidSegmentSimulationOneDBackend : uint8
 {
 	CpuGameThread,
 	CpuBackgroundThread,
-	GpuComputeShader UMETA(DisplayName = "Gpu Compute Shader"),
-	GpuComputeShaderSynchronous UMETA(DisplayName = "Gpu Compute Shader Synchronous")
+	GpuComputeShader,
+	GpuComputeShaderSynchronous
 };
 
 inline bool FluidSegmentSimulationOneDUsesGpuComputeBackend(EFluidSegmentSimulationOneDBackend Backend)
