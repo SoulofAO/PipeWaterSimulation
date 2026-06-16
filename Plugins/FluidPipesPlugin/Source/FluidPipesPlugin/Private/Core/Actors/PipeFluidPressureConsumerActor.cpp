@@ -48,10 +48,6 @@ float APipeFluidPressureConsumerActor::EvaluateRuntimeZeroDimensionExternalVolum
 float APipeFluidPressureConsumerActor::ComputeRuntimeSignedVolumeFlowRateForOneDimensionPipeBoundary(bool bLowAxisPipeAttachedEndpoint, float BoundaryAdjacentCellGaugePressure) const
 {
 	const float PressureConsumerVolumeFlowRateMagnitude = ComputePressureConsumerVolumeFlowRateMagnitudeForGaugePressure(BoundaryAdjacentCellGaugePressure);
-	if (PressureConsumerVolumeFlowRateMagnitude <= KINDA_SMALL_NUMBER)
-	{
-		return 0.0f;
-	}
 	return bLowAxisPipeAttachedEndpoint ? -PressureConsumerVolumeFlowRateMagnitude : PressureConsumerVolumeFlowRateMagnitude;
 }
 

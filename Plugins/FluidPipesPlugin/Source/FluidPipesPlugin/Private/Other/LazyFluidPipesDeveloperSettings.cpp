@@ -8,6 +8,7 @@ void ULazyFluidPipesDeveloperSettings::CopyFrom(const ULazyFluidPipesDeveloperSe
 	EnableZeroDSimulationStateVariableClamping = SourceSettings.EnableZeroDSimulationStateVariableClamping;
 	ZeroDMinimumPressure = SourceSettings.ZeroDMinimumPressure;
 	ZeroDMaximumPressure = SourceSettings.ZeroDMaximumPressure;
+	ZeroDPressureScale = SourceSettings.ZeroDPressureScale;
 	ZeroDMinimumVolumeFlowRate = SourceSettings.ZeroDMinimumVolumeFlowRate;
 	ZeroDMaximumVolumeFlowRate = SourceSettings.ZeroDMaximumVolumeFlowRate;
 	SimulationStepTimeZeroD = SourceSettings.SimulationStepTimeZeroD;

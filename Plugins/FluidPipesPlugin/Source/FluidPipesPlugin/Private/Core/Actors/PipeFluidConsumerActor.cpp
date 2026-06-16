@@ -19,11 +19,6 @@ FFluidNetworkNodeStateZeroD APipeFluidConsumerActor::ImportFluidNetworkNodeState
 FFluidSegmentStateOneD APipeFluidConsumerActor::ImportFluidSegmentStateOneDEndpoint(FFluidSegmentStateOneD Segment, bool bLeftEndpoint) const
 {
 	const float DemandMagnitude = FMath::Abs(ConsumerVolumeFlowRateDemand);
-	if (DemandMagnitude <= KINDA_SMALL_NUMBER)
-	{
-		return Segment;
-	}
-
 	const float SignedBoundaryFlow = bLeftEndpoint ? -DemandMagnitude : DemandMagnitude;
 
 	if (bLeftEndpoint)
@@ -47,10 +42,6 @@ float APipeFluidConsumerActor::EvaluateRuntimeZeroDimensionExternalVolumeFlowCon
 float APipeFluidConsumerActor::ComputeRuntimeSignedVolumeFlowRateForOneDimensionPipeBoundary(bool bLowAxisPipeAttachedEndpoint, float) const
 {
 	const float DemandMagnitude = FMath::Abs(ConsumerVolumeFlowRateDemand);
-	if (DemandMagnitude <= KINDA_SMALL_NUMBER)
-	{
-		return 0.0f;
-	}
 	return bLowAxisPipeAttachedEndpoint ? -DemandMagnitude : DemandMagnitude;
 }
 

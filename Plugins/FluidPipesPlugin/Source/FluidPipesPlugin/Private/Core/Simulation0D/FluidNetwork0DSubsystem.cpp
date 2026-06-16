@@ -235,10 +235,13 @@ void UFluidNetwork0DSubsystem::IntegrateNodeVolumes(float SimulationStepTime)
 
 void UFluidNetwork0DSubsystem::UpdateNodePressures()
 {
+	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
+	const float SafePressureScale = FMath::Max(Settings.ZeroDPressureScale, KINDA_SMALL_NUMBER);
 	for (FFluidNetworkNodeStateZeroD& NetworkNodeState : NetworkNodeStates)
 	{
 		const float SafeCompliance = FMath::Max(NetworkNodeState.Compliance, KINDA_SMALL_NUMBER);
-		NetworkNodeState.Pressure = NetworkNodeState.ReferencePressure + (NetworkNodeState.StoredVolume - NetworkNodeState.ReferenceVolume) / SafeCompliance;
+		const float PressureFromStoredVolume = (NetworkNodeState.StoredVolume - NetworkNodeState.ReferenceVolume) / SafeCompliance;
+		NetworkNodeState.Pressure = NetworkNodeState.ReferencePressure + PressureFromStoredVolume * SafePressureScale;
 	}
 }
 

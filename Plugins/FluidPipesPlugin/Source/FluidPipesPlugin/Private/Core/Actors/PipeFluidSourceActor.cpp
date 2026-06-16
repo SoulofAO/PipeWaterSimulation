@@ -19,11 +19,6 @@ FFluidNetworkNodeStateZeroD APipeFluidSourceActor::ImportFluidNetworkNodeStateZe
 FFluidSegmentStateOneD APipeFluidSourceActor::ImportFluidSegmentStateOneDEndpoint(FFluidSegmentStateOneD Segment, bool bLeftEndpoint) const
 {
 	const float SupplyMagnitude = FMath::Max(0.0f, SourceVolumeFlowRate);
-	if (SupplyMagnitude <= KINDA_SMALL_NUMBER)
-	{
-		return Segment;
-	}
-
 	if (bLeftEndpoint)
 	{
 		Segment.LeftBoundaryConditionType = EFluidBoundaryConditionTypeOneD::FixedFlow;
@@ -45,10 +40,6 @@ float APipeFluidSourceActor::EvaluateRuntimeZeroDimensionExternalVolumeFlowContr
 float APipeFluidSourceActor::ComputeRuntimeSignedVolumeFlowRateForOneDimensionPipeBoundary(bool bLowAxisPipeAttachedEndpoint, float) const
 {
 	const float SupplyMagnitude = FMath::Max(0.0f, SourceVolumeFlowRate);
-	if (SupplyMagnitude <= KINDA_SMALL_NUMBER)
-	{
-		return 0.0f;
-	}
 	return bLowAxisPipeAttachedEndpoint ? SupplyMagnitude : -SupplyMagnitude;
 }
 

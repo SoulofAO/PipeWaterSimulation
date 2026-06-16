@@ -29,6 +29,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidZeroD")
 	float ZeroDMaximumPressure = 1000000.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidZeroD", meta = (ClampMin = "0.000001", UIMin = "0.000001"))
+	float ZeroDPressureScale = 1.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidZeroD")
 	float ZeroDMinimumVolumeFlowRate = -10000.0f;
 
