@@ -21,6 +21,7 @@ struct FFluidPipesQueuedWorldStringRow
 
 static TMap<TWeakObjectPtr<UWorld>, TArray<FFluidPipesQueuedWorldStringRow>> GFluidPipesWorldDebugTextRows;
 static TMap<const void*, uint64> GFluidPipesWorldDebugLastDrawFrameByCanvas;
+static TMap<TWeakObjectPtr<UWorld>, uint64> GFluidPipesWorldDebugLastQueueFrameByWorld;
 static FDelegateHandle GFluidPipesWorldDebugTextDrawServiceHandle;
 static FDelegateHandle GFluidPipesWorldDebugTextWorldCleanupHandle;
 
@@ -31,6 +32,7 @@ static void FluidPipesWorldDebugTextOnWorldCleanup(UWorld* World, bool, bool)
 		return;
 	}
 	GFluidPipesWorldDebugTextRows.Remove(TWeakObjectPtr<UWorld>(World));
+	GFluidPipesWorldDebugLastQueueFrameByWorld.Remove(TWeakObjectPtr<UWorld>(World));
 }
 
 static void FluidPipesDrawFluidDebugScreenLegend(UCanvas* Canvas, UFont* RenderFont, const FFontRenderInfo& FontRenderInfo, const FIntRect& ViewRect)
@@ -168,6 +170,7 @@ void FluidPipesWorldDebugTextShutdown()
 		GFluidPipesWorldDebugTextWorldCleanupHandle = FDelegateHandle();
 	}
 	GFluidPipesWorldDebugTextRows.Empty();
+	GFluidPipesWorldDebugLastQueueFrameByWorld.Empty();
 	GFluidPipesWorldDebugLastDrawFrameByCanvas.Empty();
 }
 
@@ -181,6 +184,7 @@ void FluidPipesWorldDebugTextClearWorld(UWorld* World)
 	{
 		FoundRows->Reset();
 	}
+	GFluidPipesWorldDebugLastQueueFrameByWorld.Remove(TWeakObjectPtr<UWorld>(World));
 }
 
 void FluidPipesWorldDebugTextQueueString(UWorld* World, FVector WorldLocation, const FString& DisplayText, FColor TextColor, float FontScale)
@@ -189,7 +193,15 @@ void FluidPipesWorldDebugTextQueueString(UWorld* World, FVector WorldLocation, c
 	{
 		return;
 	}
-	TArray<FFluidPipesQueuedWorldStringRow>& Rows = GFluidPipesWorldDebugTextRows.FindOrAdd(TWeakObjectPtr<UWorld>(World));
+	const TWeakObjectPtr<UWorld> WorldKey(World);
+	uint64& LastQueueFrameForWorld = GFluidPipesWorldDebugLastQueueFrameByWorld.FindOrAdd(WorldKey);
+	TArray<FFluidPipesQueuedWorldStringRow>& Rows = GFluidPipesWorldDebugTextRows.FindOrAdd(WorldKey);
+	if (LastQueueFrameForWorld != GFrameCounter)
+	{
+		Rows.Reset();
+		LastQueueFrameForWorld = GFrameCounter;
+	}
+
 	FFluidPipesQueuedWorldStringRow Row;
 	Row.WorldLocation = WorldLocation;
 	Row.DisplayText = DisplayText;

@@ -36,6 +36,41 @@ static bool FluidPipeIsPassiveJunctionSceneNode(UWorld* World, int32 SceneNodeKe
 	return false;
 }
 
+static APipeFluidBasePointActor* FluidPipeFindPointActorBySceneNodeKey(UWorld* World, int32 SceneNodeKey)
+{
+	if (!World || SceneNodeKey == INDEX_NONE)
+	{
+		return nullptr;
+	}
+
+	for (TActorIterator<APipeFluidBasePointActor> Iterator(World); Iterator; ++Iterator)
+	{
+		APipeFluidBasePointActor* PointActor = *Iterator;
+		if (PointActor && PointActor->SceneNodeKey == SceneNodeKey)
+		{
+			return PointActor;
+		}
+	}
+
+	return nullptr;
+}
+
+static bool FluidPipeAreZeroDEdgesColinearAtMiddleNode(UWorld* World, int32 FirstOuterSceneNodeKey, int32 MiddleSceneNodeKey, int32 SecondOuterSceneNodeKey)
+{
+	APipeFluidBasePointActor* FirstOuterPointActor = FluidPipeFindPointActorBySceneNodeKey(World, FirstOuterSceneNodeKey);
+	APipeFluidBasePointActor* MiddlePointActor = FluidPipeFindPointActorBySceneNodeKey(World, MiddleSceneNodeKey);
+	APipeFluidBasePointActor* SecondOuterPointActor = FluidPipeFindPointActorBySceneNodeKey(World, SecondOuterSceneNodeKey);
+	if (!FirstOuterPointActor || !MiddlePointActor || !SecondOuterPointActor)
+	{
+		return false;
+	}
+
+	const FVector DirectionToFirstOuter = (FirstOuterPointActor->GetActorLocation() - MiddlePointActor->GetActorLocation()).GetSafeNormal();
+	const FVector DirectionToSecondOuter = (SecondOuterPointActor->GetActorLocation() - MiddlePointActor->GetActorLocation()).GetSafeNormal();
+	const float DirectionDot = FVector::DotProduct(DirectionToFirstOuter, DirectionToSecondOuter);
+	return DirectionDot <= -0.99f;
+}
+
 static bool FluidPipeOneDSegmentPhysicsMatches(const FFluidSegmentStateOneD& FirstSegment, const FFluidSegmentStateOneD& SecondSegment)
 {
 	const float DiameterTolerance = 0.001f;
@@ -313,6 +348,18 @@ void FFluidPipePassiveJunctionMerge::MergeColinearZeroDEdges(TArray<FFluidNetwor
 			const int32 OuterNodeIndexFirst = ResolveOuterNodeIndex(FirstEdge);
 			const int32 OuterNodeIndexSecond = ResolveOuterNodeIndex(SecondEdge);
 			if (OuterNodeIndexFirst == INDEX_NONE || OuterNodeIndexSecond == INDEX_NONE)
+			{
+				continue;
+			}
+			if (!OrderedSceneNodeKeys.IsValidIndex(OuterNodeIndexFirst) || !OrderedSceneNodeKeys.IsValidIndex(OuterNodeIndexSecond))
+			{
+				continue;
+			}
+
+			const int32 FirstOuterSceneNodeKey = OrderedSceneNodeKeys[OuterNodeIndexFirst];
+			const int32 MiddleSceneNodeKeyForMerge = OrderedSceneNodeKeys[MiddleNodeIndex];
+			const int32 SecondOuterSceneNodeKey = OrderedSceneNodeKeys[OuterNodeIndexSecond];
+			if (!FluidPipeAreZeroDEdgesColinearAtMiddleNode(World, FirstOuterSceneNodeKey, MiddleSceneNodeKeyForMerge, SecondOuterSceneNodeKey))
 			{
 				continue;
 			}
