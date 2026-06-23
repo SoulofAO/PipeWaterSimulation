@@ -1,0 +1,26 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/FluidPipesPlugin/Private/FluidNetwork0DCommon.ush"
+
+StructuredBuffer<float> NodeStoredVolume;
+StructuredBuffer<float> NodeCompliance;
+StructuredBuffer<float> NodeReferenceVolume;
+StructuredBuffer<float> NodeReferencePressure;
+RWStructuredBuffer<float> NodePressure;
+
+uint NodeCount;
+float ZeroDPressureScale;
+
+[numthreads(FLUID_NETWORK_0D_GPU_THREAD_GROUP_SIZE, 1, 1)]
+void FluidNetwork0DUpdatePressuresMain(uint3 DispatchThreadId : SV_DispatchThreadId)
+{
+	const uint NodeIndex = DispatchThreadId.x;
+	if (NodeIndex >= NodeCount)
+	{
+		return;
+	}
+
+	const float SafePressureScale = max(ZeroDPressureScale, 1.0e-8f);
+	const float SafeCompliance = max(NodeCompliance[NodeIndex], 1.0e-8f);
+	const float PressureFromStoredVolume = (NodeStoredVolume[NodeIndex] - NodeReferenceVolume[NodeIndex]) / SafeCompliance;
+	NodePressure[NodeIndex] = NodeReferencePressure[NodeIndex] + PressureFromStoredVolume * SafePressureScale;
+}

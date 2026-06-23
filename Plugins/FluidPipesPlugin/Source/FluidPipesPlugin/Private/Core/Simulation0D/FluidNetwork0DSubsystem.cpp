@@ -2,7 +2,8 @@
 
 #include "Core/Actors/PipeFluidBasePointActor.h"
 #include "Core/LevelImport/FluidPipePassiveJunctionMerge.h"
-#include "Core/Simulation/FluidSimulationStateLimits.h"
+#include "Core/Simulation0D/FluidNetwork0DCPUSimulation.h"
+#include "Core/Simulation0D/FluidNetwork0DGpuSimulation.h"
 #include "DrawDebugHelpers.h"
 #include "EngineUtils.h"
 #include "FluidPipesDrawDebug.h"
@@ -57,12 +58,15 @@ static void CollectFluidPipeBasePointActorsOrderedSameAsZeroDimensionImport(UWor
 void UFluidNetwork0DSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	ActiveSimulation = MakeUnique<FFluidNetwork0DCPUSimulation>();
+	ActiveZeroDSimulationBackend = EFluidNetworkSimulationZeroDBackend::CpuGameThread;
 	ResetSimulationState();
 }
 
 void UFluidNetwork0DSubsystem::Deinitialize()
 {
 	ResetSimulationState();
+	ActiveSimulation.Reset();
 	Super::Deinitialize();
 }
 
@@ -78,6 +82,11 @@ void UFluidNetwork0DSubsystem::Tick(float DeltaTime)
 		const double FrameStartSeconds = (bPrintSimulationFrameTiming || bRecordBenchmarkFrameStats) ? FPlatformTime::Seconds() : 0.0;
 		int32 SimulationStepCount = 0;
 
+		if (FluidPipesShouldDrawZeroDWorldOverlay() && UsesOffGameThreadZeroDSimulationState())
+		{
+			ReadbackAndDrawOffGameThreadZeroDDebug();
+		}
+
 		AccumulatedTime += DeltaTime;
 		while (AccumulatedTime >= Settings.SimulationStepTimeZeroD)
 		{
@@ -91,7 +100,7 @@ void UFluidNetwork0DSubsystem::Tick(float DeltaTime)
 			FluidPipeSubsystem->RecordBenchmarkZeroDFrameSimulationDurationSeconds(FPlatformTime::Seconds() - FrameStartSeconds);
 		}
 
-		if (FluidPipesShouldDrawZeroDWorldOverlay())
+		if (FluidPipesShouldDrawZeroDWorldOverlay() && !UsesOffGameThreadZeroDSimulationState())
 		{
 			DrawDebugZeroDWorldOverlay();
 		}
@@ -104,13 +113,15 @@ void UFluidNetwork0DSubsystem::Tick(float DeltaTime)
 		if (bPrintSimulationFrameTiming)
 		{
 			const double ElapsedMilliseconds = (FPlatformTime::Seconds() - FrameStartSeconds) * 1000.0;
+			const FString SimulationBackendLabel = BuildZeroDSimulationBackendDisplayName(ActiveZeroDSimulationBackend);
 			const FString TimingMessage = FString::Format(
-				TEXT("0D simulation frame: {0} ms | steps={1} | nodes={2} | edges={3}"),
+				TEXT("0D simulation frame: {0} ms | steps={1} | nodes={2} | edges={3} | {4}"),
 				{
 					FString::SanitizeFloat(ElapsedMilliseconds),
 					FString::FromInt(SimulationStepCount),
 					FString::FromInt(NetworkNodeStates.Num()),
-					FString::FromInt(NetworkEdgeStates.Num())
+					FString::FromInt(NetworkEdgeStates.Num()),
+					SimulationBackendLabel
 				});
 			FluidPipesPrintSimulationFrameTimingMessage(this, TimingMessage, FLinearColor::Green);
 		}
@@ -124,9 +135,14 @@ TStatId UFluidNetwork0DSubsystem::GetStatId() const
 
 void UFluidNetwork0DSubsystem::ResetSimulationState()
 {
+	if (ActiveSimulation)
+	{
+		ActiveSimulation->Release();
+	}
 	NetworkNodeStates.Reset();
 	NetworkEdgeStates.Reset();
 	AccumulatedTime = 0.0f;
+	ActiveZeroDSimulationBackend = EFluidNetworkSimulationZeroDBackend::CpuGameThread;
 }
 
 const TArray<FFluidNetworkNodeStateZeroD>& UFluidNetwork0DSubsystem::GetNodeStates() const
@@ -149,16 +165,153 @@ void UFluidNetwork0DSubsystem::ApplyImportedZeroDNetwork(const TArray<FFluidNetw
 		FFluidPipePassiveJunctionMerge::MergeColinearZeroDEdges(NetworkNodeStates, NetworkEdgeStates, GetWorld());
 	}
 	AccumulatedTime = 0.0f;
+	EnsureActiveZeroDSimulationMatchesSettings(Settings);
+	if (ActiveSimulation)
+	{
+		ActiveSimulation->RebuildFromNetwork(NetworkNodeStates, NetworkEdgeStates, GetWorld());
+	}
+}
+
+void UFluidNetwork0DSubsystem::RebuildActiveSimulationForCurrentSettings()
+{
+	EnsureActiveZeroDSimulationMatchesSettings(FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this));
+}
+
+bool UFluidNetwork0DSubsystem::UsesOffGameThreadZeroDSimulationState() const
+{
+	return FluidNetworkSimulationZeroDUsesGpuComputeBackend(ActiveZeroDSimulationBackend)
+		|| ActiveZeroDSimulationBackend == EFluidNetworkSimulationZeroDBackend::CpuBackgroundThread;
+}
+
+FString UFluidNetwork0DSubsystem::BuildZeroDSimulationBackendDisplayName(EFluidNetworkSimulationZeroDBackend Backend)
+{
+	switch (Backend)
+	{
+	case EFluidNetworkSimulationZeroDBackend::GpuComputeShader:
+		return TEXT("GPU");
+	case EFluidNetworkSimulationZeroDBackend::GpuComputeShaderSynchronous:
+		return TEXT("GPU-Sync");
+	case EFluidNetworkSimulationZeroDBackend::CpuBackgroundThread:
+		return TEXT("CPU-Background");
+	default:
+		return TEXT("CPU-GameThread");
+	}
+}
+
+void UFluidNetwork0DSubsystem::EnsureActiveZeroDSimulationMatchesSettings(const ULazyFluidPipesDeveloperSettings& Settings)
+{
+	EFluidNetworkSimulationZeroDBackend ResolvedBackend = Settings.FluidNetworkSimulationZeroDBackend;
+	if (FluidNetworkSimulationZeroDUsesGpuComputeBackend(ResolvedBackend))
+	{
+		const TUniquePtr<FFluidNetwork0DGpuSimulation> GpuAvailabilityProbe = MakeUnique<FFluidNetwork0DGpuSimulation>();
+		if (!GpuAvailabilityProbe->IsAvailable())
+		{
+			ResolvedBackend = EFluidNetworkSimulationZeroDBackend::CpuGameThread;
+		}
+	}
+
+	const bool bNeedsGpuImplementation = FluidNetworkSimulationZeroDUsesGpuComputeBackend(ResolvedBackend);
+	const bool bActiveUsesGpuImplementation = FluidNetworkSimulationZeroDUsesGpuComputeBackend(ActiveZeroDSimulationBackend);
+
+	if (bNeedsGpuImplementation == bActiveUsesGpuImplementation && ActiveSimulation)
+	{
+		ActiveZeroDSimulationBackend = ResolvedBackend;
+		if (!bNeedsGpuImplementation)
+		{
+			FFluidNetwork0DCPUSimulation* CpuSimulation = static_cast<FFluidNetwork0DCPUSimulation*>(ActiveSimulation.Get());
+			if (CpuSimulation)
+			{
+				CpuSimulation->BindSimulationSettings(&Settings);
+				const bool bUseBackgroundWorker = ResolvedBackend == EFluidNetworkSimulationZeroDBackend::CpuBackgroundThread;
+				if (CpuSimulation->UsesBackgroundWorker() != bUseBackgroundWorker)
+				{
+					CpuSimulation->ConfigureBackgroundWorker(bUseBackgroundWorker);
+					if (bUseBackgroundWorker)
+					{
+						CpuSimulation->PublishNetworkStatesToWorker(NetworkNodeStates, NetworkEdgeStates);
+					}
+				}
+			}
+		}
+		return;
+	}
+
+	if (ActiveSimulation)
+	{
+		ActiveSimulation->Release();
+	}
+
+	if (bNeedsGpuImplementation)
+	{
+		ActiveSimulation = MakeUnique<FFluidNetwork0DGpuSimulation>();
+	}
+	else
+	{
+		ActiveSimulation = MakeUnique<FFluidNetwork0DCPUSimulation>();
+	}
+
+	ActiveZeroDSimulationBackend = ResolvedBackend;
+
+	if (ActiveSimulation)
+	{
+		ActiveSimulation->RebuildFromNetwork(NetworkNodeStates, NetworkEdgeStates, GetWorld());
+	}
+
+	if (!bNeedsGpuImplementation)
+	{
+		FFluidNetwork0DCPUSimulation* CpuSimulation = static_cast<FFluidNetwork0DCPUSimulation*>(ActiveSimulation.Get());
+		if (CpuSimulation)
+		{
+			CpuSimulation->BindSimulationSettings(&Settings);
+			const bool bUseBackgroundWorker = ResolvedBackend == EFluidNetworkSimulationZeroDBackend::CpuBackgroundThread;
+			CpuSimulation->ConfigureBackgroundWorker(bUseBackgroundWorker);
+			if (bUseBackgroundWorker)
+			{
+				CpuSimulation->PublishNetworkStatesToWorker(NetworkNodeStates, NetworkEdgeStates);
+			}
+		}
+	}
 }
 
 void UFluidNetwork0DSubsystem::SimulateStep(float SimulationStepTime)
 {
-	RefreshNetworkNodeExternalFlowsFromWorldPointActors();
-	UpdateEdgeFlows(SimulationStepTime);
-	IntegrateNodeVolumes(SimulationStepTime);
-	UpdateNodePressures();
 	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
-	FFluidSimulationStateLimits::ClampAllNetworkStatesZeroD(NetworkNodeStates, NetworkEdgeStates, Settings);
+	EnsureActiveZeroDSimulationMatchesSettings(Settings);
+	RefreshNetworkNodeExternalFlowsFromWorldPointActors();
+
+	switch (ActiveZeroDSimulationBackend)
+	{
+	case EFluidNetworkSimulationZeroDBackend::GpuComputeShader:
+	case EFluidNetworkSimulationZeroDBackend::GpuComputeShaderSynchronous:
+	{
+		if (FFluidNetwork0DGpuSimulation* GpuSimulation = static_cast<FFluidNetwork0DGpuSimulation*>(ActiveSimulation.Get()))
+		{
+			GpuSimulation->UploadNodeSourceFlows(NetworkNodeStates);
+			GpuSimulation->SimulateStepGpuOnly(SimulationStepTime);
+			if (FluidNetworkSimulationZeroDRequiresGpuStepCompletionWait(ActiveZeroDSimulationBackend))
+			{
+				GpuSimulation->WaitForGpuStepCompletion();
+				GpuSimulation->ReadbackToNetworkStates(NetworkNodeStates, NetworkEdgeStates);
+			}
+		}
+		break;
+	}
+	case EFluidNetworkSimulationZeroDBackend::CpuBackgroundThread:
+	{
+		if (FFluidNetwork0DCPUSimulation* CpuSimulation = static_cast<FFluidNetwork0DCPUSimulation*>(ActiveSimulation.Get()))
+		{
+			CpuSimulation->PublishNodeSourceFlowsToWorker(NetworkNodeStates);
+			CpuSimulation->EnqueueSimulateStepCpuOnly(SimulationStepTime);
+		}
+		break;
+	}
+	default:
+		if (ActiveSimulation)
+		{
+			ActiveSimulation->SimulateStep(GetWorld(), NetworkNodeStates, NetworkEdgeStates, SimulationStepTime);
+		}
+		break;
+	}
 }
 
 void UFluidNetwork0DSubsystem::RefreshNetworkNodeExternalFlowsFromWorldPointActors()
@@ -185,67 +338,23 @@ void UFluidNetwork0DSubsystem::RefreshNetworkNodeExternalFlowsFromWorldPointActo
 	}
 }
 
-void UFluidNetwork0DSubsystem::UpdateEdgeFlows(float SimulationStepTime)
+void UFluidNetwork0DSubsystem::ReadbackAndDrawOffGameThreadZeroDDebug()
 {
-	for (FFluidNetworkEdgeStateZeroD& NetworkEdgeState : NetworkEdgeStates)
+	if (FluidNetworkSimulationZeroDUsesGpuComputeBackend(ActiveZeroDSimulationBackend))
 	{
-		if (!NetworkNodeStates.IsValidIndex(NetworkEdgeState.FromNodeIndex) || !NetworkNodeStates.IsValidIndex(NetworkEdgeState.ToNodeIndex))
+		if (FFluidNetwork0DGpuSimulation* GpuSimulation = static_cast<FFluidNetwork0DGpuSimulation*>(ActiveSimulation.Get()))
 		{
-			NetworkEdgeState.FlowRate = 0.0f;
-			continue;
-		}
-
-		const float PressureDifference = NetworkNodeStates[NetworkEdgeState.FromNodeIndex].Pressure - NetworkNodeStates[NetworkEdgeState.ToNodeIndex].Pressure;
-		if (NetworkEdgeState.Inertance > KINDA_SMALL_NUMBER)
-		{
-			const float FlowRateDerivative = (PressureDifference - NetworkEdgeState.Resistance * NetworkEdgeState.FlowRate) / NetworkEdgeState.Inertance;
-			NetworkEdgeState.FlowRate += FlowRateDerivative * SimulationStepTime;
-		}
-		else
-		{
-			NetworkEdgeState.FlowRate = PressureDifference / FMath::Max(NetworkEdgeState.Resistance, KINDA_SMALL_NUMBER);
+			GpuSimulation->ReadbackToNetworkStates(NetworkNodeStates, NetworkEdgeStates);
 		}
 	}
+	else if (FFluidNetwork0DCPUSimulation* CpuSimulation = static_cast<FFluidNetwork0DCPUSimulation*>(ActiveSimulation.Get()))
+	{
+		CpuSimulation->ReadbackToNetworkStates(NetworkNodeStates, NetworkEdgeStates);
+	}
+	DrawDebugZeroDWorldOverlay();
 }
 
-void UFluidNetwork0DSubsystem::IntegrateNodeVolumes(float SimulationStepTime)
-{
-	TArray<float> NodeNetFlows;
-	NodeNetFlows.Init(0.0f, NetworkNodeStates.Num());
-
-	for (const FFluidNetworkEdgeStateZeroD& NetworkEdgeState : NetworkEdgeStates)
-	{
-		if (NetworkNodeStates.IsValidIndex(NetworkEdgeState.FromNodeIndex))
-		{
-			NodeNetFlows[NetworkEdgeState.FromNodeIndex] -= NetworkEdgeState.FlowRate;
-		}
-
-		if (NetworkNodeStates.IsValidIndex(NetworkEdgeState.ToNodeIndex))
-		{
-			NodeNetFlows[NetworkEdgeState.ToNodeIndex] += NetworkEdgeState.FlowRate;
-		}
-	}
-
-	for (int32 NodeIndex = 0; NodeIndex < NetworkNodeStates.Num(); ++NodeIndex)
-	{
-		NetworkNodeStates[NodeIndex].StoredVolume += (NodeNetFlows[NodeIndex] + NetworkNodeStates[NodeIndex].SourceFlow) * SimulationStepTime;
-		NetworkNodeStates[NodeIndex].StoredVolume = FMath::Max(NetworkNodeStates[NodeIndex].StoredVolume, 0.0f);
-	}
-}
-
-void UFluidNetwork0DSubsystem::UpdateNodePressures()
-{
-	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
-	const float SafePressureScale = FMath::Max(Settings.ZeroDPressureScale, KINDA_SMALL_NUMBER);
-	for (FFluidNetworkNodeStateZeroD& NetworkNodeState : NetworkNodeStates)
-	{
-		const float SafeCompliance = FMath::Max(NetworkNodeState.Compliance, KINDA_SMALL_NUMBER);
-		const float PressureFromStoredVolume = (NetworkNodeState.StoredVolume - NetworkNodeState.ReferenceVolume) / SafeCompliance;
-		NetworkNodeState.Pressure = NetworkNodeState.ReferencePressure + PressureFromStoredVolume * SafePressureScale;
-	}
-}
-
-void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay() const
+void UFluidNetwork0DSubsystem::DrawDebugZeroDWorldOverlay()
 {
 	UWorld* World = GetWorld();
 	if (!World || NetworkNodeStates.Num() == 0)

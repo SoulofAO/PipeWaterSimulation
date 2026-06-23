@@ -12,6 +12,7 @@ void ULazyFluidPipesDeveloperSettings::CopyFrom(const ULazyFluidPipesDeveloperSe
 	ZeroDMinimumVolumeFlowRate = SourceSettings.ZeroDMinimumVolumeFlowRate;
 	ZeroDMaximumVolumeFlowRate = SourceSettings.ZeroDMaximumVolumeFlowRate;
 	SimulationStepTimeZeroD = SourceSettings.SimulationStepTimeZeroD;
+	FluidNetworkSimulationZeroDBackend = SourceSettings.FluidNetworkSimulationZeroDBackend;
 	EnableFluidSegmentSimulationOneD = SourceSettings.EnableFluidSegmentSimulationOneD;
 	OneDMergeColinearPassiveJunctionAtImport = SourceSettings.OneDMergeColinearPassiveJunctionAtImport;
 	EnableOneDSimulationStateVariableClamping = SourceSettings.EnableOneDSimulationStateVariableClamping;
@@ -46,10 +47,11 @@ FString ULazyFluidPipesDeveloperSettings::BuildProfileDescription() const
 		return ProfileLabel.ToString();
 	}
 	return FString::Format(
-		TEXT("0D={0} 1D={1} Backend={2}"),
+		TEXT("0D={0} 1D={1} 0D-Backend={2} 1D-Backend={3}"),
 		{
 			EnableFluidNetworkSimulationZeroD ? TEXT("on") : TEXT("off"),
 			EnableFluidSegmentSimulationOneD ? TEXT("on") : TEXT("off"),
+			UEnum::GetDisplayValueAsText(FluidNetworkSimulationZeroDBackend).ToString(),
 			UEnum::GetDisplayValueAsText(FluidSegmentSimulationOneDBackend).ToString()
 		});
 }

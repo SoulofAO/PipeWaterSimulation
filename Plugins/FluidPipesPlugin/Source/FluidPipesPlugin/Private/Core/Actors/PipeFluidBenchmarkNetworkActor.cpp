@@ -8,6 +8,7 @@
 #include "Core/Actors/PipeFluidPressureConsumerActor.h"
 #include "Core/Actors/PipeFluidSourceActor.h"
 #include "Engine/World.h"
+#include "Components/PrimitiveComponent.h"
 
 APipeFluidBenchmarkNetworkActor::APipeFluidBenchmarkNetworkActor()
 {
@@ -240,6 +241,30 @@ void APipeFluidBenchmarkNetworkActor::ConfigureSpawnedBenchmarkPoint(APipeFluidB
 	}
 }
 
+void APipeFluidBenchmarkNetworkActor::ConfigureSpawnedBenchmarkActorRendering(AActor* SpawnedActor) const
+{
+	if (!bDisableRenderingForSpawnedActors || !SpawnedActor)
+	{
+		return;
+	}
+
+	SpawnedActor->SetActorHiddenInGame(true);
+	SpawnedActor->SetHidden(true);
+
+	TArray<UPrimitiveComponent*> PrimitiveComponents;
+	SpawnedActor->GetComponents<UPrimitiveComponent>(PrimitiveComponents);
+	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	{
+		if (!PrimitiveComponent)
+		{
+			continue;
+		}
+
+		PrimitiveComponent->SetVisibility(false, true);
+		PrimitiveComponent->SetHiddenInGame(true, true);
+	}
+}
+
 void APipeFluidBenchmarkNetworkActor::SpawnBenchmarkPoints(TArray<APipeFluidBasePointActor*>& SpawnedPoints)
 {
 	UWorld* World = GetWorld();
@@ -285,6 +310,7 @@ void APipeFluidBenchmarkNetworkActor::SpawnBenchmarkPoints(TArray<APipeFluidBase
 			PointActor->SceneNodeKey = PointArrayIndex;
 			SpawnedBenchmarkActors.Add(PointActor);
 			ConfigureSpawnedBenchmarkPoint(PointActor);
+			ConfigureSpawnedBenchmarkActorRendering(PointActor);
 		}
 	}
 }
@@ -334,6 +360,7 @@ void APipeFluidBenchmarkNetworkActor::SpawnBenchmarkPipes(const TArray<APipeFlui
 						PipeActor->EditorRefreshFluidPipeAttachmentToAttachedEndpoints();
 #endif
 						SpawnedBenchmarkActors.Add(PipeActor);
+						ConfigureSpawnedBenchmarkActorRendering(PipeActor);
 						PipeSerial += 1;
 					}
 				}
@@ -356,6 +383,7 @@ void APipeFluidBenchmarkNetworkActor::SpawnBenchmarkPipes(const TArray<APipeFlui
 						PipeActor->EditorRefreshFluidPipeAttachmentToAttachedEndpoints();
 #endif
 						SpawnedBenchmarkActors.Add(PipeActor);
+						ConfigureSpawnedBenchmarkActorRendering(PipeActor);
 						PipeSerial += 1;
 					}
 				}

@@ -1,0 +1,37 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/FluidPipesPlugin/Private/FluidNetwork0DCommon.ush"
+
+StructuredBuffer<uint> NodeIncidentEdgeOffset;
+StructuredBuffer<uint> NodeIncidentEdgeIndex;
+StructuredBuffer<int> NodeIncidentEdgeSign;
+StructuredBuffer<float> EdgeFlowRate;
+StructuredBuffer<float> NodeSourceFlow;
+RWStructuredBuffer<float> NodeStoredVolume;
+
+uint NodeCount;
+float SimulationStepTime;
+
+[numthreads(FLUID_NETWORK_0D_GPU_THREAD_GROUP_SIZE, 1, 1)]
+void FluidNetwork0DIntegrateVolumesMain(uint3 DispatchThreadId : SV_DispatchThreadId)
+{
+	const uint NodeIndex = DispatchThreadId.x;
+	if (NodeIndex >= NodeCount)
+	{
+		return;
+	}
+
+	float NodeNetFlow = NodeSourceFlow[NodeIndex];
+	const uint IncidentBegin = NodeIncidentEdgeOffset[NodeIndex];
+	const uint IncidentEnd = NodeIncidentEdgeOffset[NodeIndex + 1u];
+	for (uint IncidentIndex = IncidentBegin; IncidentIndex < IncidentEnd; ++IncidentIndex)
+	{
+		const uint EdgeIndex = NodeIncidentEdgeIndex[IncidentIndex];
+		const int EdgeSign = NodeIncidentEdgeSign[IncidentIndex];
+		NodeNetFlow += (float)EdgeSign * EdgeFlowRate[EdgeIndex];
+	}
+
+	float StoredVolume = NodeStoredVolume[NodeIndex];
+	StoredVolume += NodeNetFlow * SimulationStepTime;
+	StoredVolume = max(StoredVolume, 0.0f);
+	NodeStoredVolume[NodeIndex] = StoredVolume;
+}

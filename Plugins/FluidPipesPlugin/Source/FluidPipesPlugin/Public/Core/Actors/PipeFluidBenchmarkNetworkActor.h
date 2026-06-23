@@ -46,6 +46,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidBenchmark", meta = (ClampMin = "2", UIMin = "2"))
 	int32 PipeSimulationCellCount = 12;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidBenchmark", meta = (Tooltip = "Disables rendering for all actors spawned by BuildBenchmarkNetwork."))
+	bool bDisableRenderingForSpawnedActors = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FluidBenchmark", meta = (Tooltip = "When any count is greater than zero, points from this map are placed on random grid cells. Remaining cells use PointActorClass. Empty map keeps the legacy placement heuristic."))
 	TMap<TSubclassOf<APipeFluidBasePointActor>, int32> BenchmarkPointCountsByClass;
 
@@ -76,6 +79,7 @@ private:
 	void SpawnBenchmarkPoints(TArray<APipeFluidBasePointActor*>& SpawnedPoints);
 	void SpawnBenchmarkPipes(const TArray<APipeFluidBasePointActor*>& SpawnedPoints);
 	void ConfigureSpawnedBenchmarkPoint(APipeFluidBasePointActor* PointActor) const;
+	void ConfigureSpawnedBenchmarkActorRendering(AActor* SpawnedActor) const;
 	TSubclassOf<APipeFluidBasePointActor> ResolveLegacyBenchmarkPointClass(int32 PointIndexX, int32 PointIndexY, int32 BenchmarkGridSizeX, int32 BenchmarkGridSizeY) const;
 	bool UsesBenchmarkPointCountMap() const;
 	void BuildBenchmarkPointClassQueue(TArray<TSubclassOf<APipeFluidBasePointActor>>& OutPointClassQueue) const;

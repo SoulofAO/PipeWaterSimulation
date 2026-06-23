@@ -1,0 +1,37 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/FluidPipesPlugin/Private/FluidNetwork0DCommon.ush"
+
+RWStructuredBuffer<float> NodePressure;
+RWStructuredBuffer<float> NodeSourceFlow;
+RWStructuredBuffer<float> EdgeFlowRate;
+
+uint NodeCount;
+uint EdgeCount;
+uint bEnableClamping;
+float MinimumPressure;
+float MaximumPressure;
+float MinimumVolumeFlowRate;
+float MaximumVolumeFlowRate;
+
+[numthreads(FLUID_NETWORK_0D_GPU_THREAD_GROUP_SIZE, 1, 1)]
+void FluidNetwork0DStateClampMain(uint3 DispatchThreadId : SV_DispatchThreadId)
+{
+	if (bEnableClamping == 0u)
+	{
+		return;
+	}
+
+	const uint NodeIndex = DispatchThreadId.x;
+	if (NodeIndex < NodeCount)
+	{
+		NodePressure[NodeIndex] = clamp(NodePressure[NodeIndex], MinimumPressure, MaximumPressure);
+		NodeSourceFlow[NodeIndex] = clamp(NodeSourceFlow[NodeIndex], MinimumVolumeFlowRate, MaximumVolumeFlowRate);
+		return;
+	}
+
+	const uint EdgeIndex = NodeIndex - NodeCount;
+	if (EdgeIndex < EdgeCount)
+	{
+		EdgeFlowRate[EdgeIndex] = clamp(EdgeFlowRate[EdgeIndex], MinimumVolumeFlowRate, MaximumVolumeFlowRate);
+	}
+}

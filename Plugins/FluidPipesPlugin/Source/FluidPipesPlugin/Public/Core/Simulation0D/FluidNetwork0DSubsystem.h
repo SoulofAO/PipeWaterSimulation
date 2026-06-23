@@ -1,9 +1,14 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Core/Simulation0D/BaseFluidNetwork0DSimulation.h"
 #include "Data/FluidData.h"
+#include "Other/FluidPipesSimulationSettingsTypes.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Templates/UniquePtr.h"
 #include "FluidNetwork0DSubsystem.generated.h"
+
+class ULazyFluidPipesDeveloperSettings;
 
 UCLASS()
 class FLUIDPIPESPLUGIN_API UFluidNetwork0DSubsystem : public UTickableWorldSubsystem
@@ -26,13 +31,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "FluidZeroD")
 	void ApplyImportedZeroDNetwork(const TArray<FFluidNetworkNodeStateZeroD>& Nodes, const TArray<FFluidNetworkEdgeStateZeroD>& Edges);
 
+	UFUNCTION(BlueprintCallable, Category = "FluidZeroD")
+	void RebuildActiveSimulationForCurrentSettings();
+
 private:
 	void SimulateStep(float SimulationStepTime);
 	void RefreshNetworkNodeExternalFlowsFromWorldPointActors();
-	void UpdateEdgeFlows(float SimulationStepTime);
-	void IntegrateNodeVolumes(float SimulationStepTime);
-	void UpdateNodePressures();
-	void DrawDebugZeroDWorldOverlay() const;
+	void DrawDebugZeroDWorldOverlay();
+	void ReadbackAndDrawOffGameThreadZeroDDebug();
+	void EnsureActiveZeroDSimulationMatchesSettings(const ULazyFluidPipesDeveloperSettings& Settings);
+	bool UsesOffGameThreadZeroDSimulationState() const;
+	static FString BuildZeroDSimulationBackendDisplayName(EFluidNetworkSimulationZeroDBackend Backend);
 
 	UPROPERTY(EditAnywhere, Category = "FluidZeroD")
 	TArray<FFluidNetworkNodeStateZeroD> NetworkNodeStates;
@@ -41,4 +50,7 @@ private:
 	TArray<FFluidNetworkEdgeStateZeroD> NetworkEdgeStates;
 
 	float AccumulatedTime = 0.0f;
+
+	TUniquePtr<FBaseFluidNetwork0DSimulation> ActiveSimulation;
+	EFluidNetworkSimulationZeroDBackend ActiveZeroDSimulationBackend = EFluidNetworkSimulationZeroDBackend::CpuGameThread;
 };

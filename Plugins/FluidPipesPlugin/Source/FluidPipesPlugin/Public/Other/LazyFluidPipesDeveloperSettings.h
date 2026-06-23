@@ -41,6 +41,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidZeroD", meta = (ClampMin = "0.001", UIMin = "0.001"))
 	float SimulationStepTimeZeroD = 0.016f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidZeroD")
+	EFluidNetworkSimulationZeroDBackend FluidNetworkSimulationZeroDBackend = EFluidNetworkSimulationZeroDBackend::CpuGameThread;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidOneD")
 	bool EnableFluidSegmentSimulationOneD = true;
 

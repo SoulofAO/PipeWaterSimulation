@@ -31,3 +31,23 @@ inline bool FluidSegmentSimulationOneDRequiresGpuStepCompletionWait(EFluidSegmen
 {
 	return Backend == EFluidSegmentSimulationOneDBackend::GpuComputeShaderSynchronous;
 }
+
+UENUM(BlueprintType)
+enum class EFluidNetworkSimulationZeroDBackend : uint8
+{
+	CpuGameThread,
+	CpuBackgroundThread,
+	GpuComputeShader,
+	GpuComputeShaderSynchronous
+};
+
+inline bool FluidNetworkSimulationZeroDUsesGpuComputeBackend(EFluidNetworkSimulationZeroDBackend Backend)
+{
+	return Backend == EFluidNetworkSimulationZeroDBackend::GpuComputeShader
+		|| Backend == EFluidNetworkSimulationZeroDBackend::GpuComputeShaderSynchronous;
+}
+
+inline bool FluidNetworkSimulationZeroDRequiresGpuStepCompletionWait(EFluidNetworkSimulationZeroDBackend Backend)
+{
+	return Backend == EFluidNetworkSimulationZeroDBackend::GpuComputeShaderSynchronous;
+}

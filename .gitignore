@@ -74,3 +74,6 @@ Plugins/**/Intermediate/*
 DerivedDataCache/*
 AGENTS.md
 PipeWaterSimulation.code-workspace
+
+# NIR document text processing scripts and debug extracts
+NirDocumentTools/
