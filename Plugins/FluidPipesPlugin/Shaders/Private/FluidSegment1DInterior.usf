@@ -1,0 +1,59 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/FluidPipesPlugin/Private/FluidSegment1DCommon.ush"
+
+StructuredBuffer<float> CurrentPressure;
+StructuredBuffer<float> CurrentFlow;
+RWStructuredBuffer<float> NextPressure;
+RWStructuredBuffer<float> NextFlow;
+
+StructuredBuffer<uint> SegmentUintTable;
+StructuredBuffer<uint> InteriorWorkPacked;
+
+uint TotalInteriorCells;
+float SimulationStepTime;
+
+[numthreads(FLUID_SEGMENT_1D_GPU_THREAD_GROUP_SIZE, 1, 1)]
+void FluidSegment1DInteriorMain(uint3 DispatchThreadId : SV_DispatchThreadId)
+{
+	const uint WorkIndex = DispatchThreadId.x;
+	if (WorkIndex >= TotalInteriorCells)
+	{
+		return;
+	}
+	const uint2 WorkItem = uint2(InteriorWorkPacked[WorkIndex * 2u + 0u], InteriorWorkPacked[WorkIndex * 2u + 1u]);
+	const uint SegmentIndex = WorkItem.x;
+	const uint CellIndex = WorkItem.y;
+
+	const uint CellBaseIndex = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 0u);
+	const uint CellCount = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 1u);
+	if (CellCount < 2u)
+	{
+		return;
+	}
+	const uint GlobalLeft = CellBaseIndex + CellIndex - 1u;
+	const uint GlobalCenter = CellBaseIndex + CellIndex;
+	const uint GlobalRight = CellBaseIndex + CellIndex + 1u;
+
+	const float CellLength = FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 8u);
+	const float CrossSectionArea = FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 9u);
+	const float SafeDensity = FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 10u);
+	const float FrictionResistance = FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 11u);
+	const float PressureCoefficient = FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 12u);
+	const float GravitySourceTerm = FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 13u);
+	const float SafeCellLength = max(CellLength, 0.01f);
+
+	const float LeftFlow = CurrentFlow[GlobalLeft];
+	const float CenterFlow = CurrentFlow[GlobalCenter];
+	const float RightFlow = CurrentFlow[GlobalRight];
+	const float LeftPressure = CurrentPressure[GlobalLeft];
+	const float CenterPressure = CurrentPressure[GlobalCenter];
+	const float RightPressure = CurrentPressure[GlobalRight];
+
+	const float FlowGradient = (RightFlow - LeftFlow) / (2.0f * SafeCellLength);
+	const float PressureGradient = (RightPressure - LeftPressure) / (2.0f * SafeCellLength);
+	const float FlowDerivative = -(CrossSectionArea / SafeDensity) * PressureGradient - FrictionResistance * CenterFlow * abs(CenterFlow) + GravitySourceTerm;
+	const float PressureDerivative = -PressureCoefficient * FlowGradient;
+
+	NextFlow[GlobalCenter] = CenterFlow + FlowDerivative * SimulationStepTime;
+	NextPressure[GlobalCenter] = CenterPressure + PressureDerivative * SimulationStepTime;
+}

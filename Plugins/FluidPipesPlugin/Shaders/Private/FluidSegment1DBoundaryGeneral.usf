@@ -1,0 +1,70 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/FluidPipesPlugin/Private/FluidSegment1DCommon.ush"
+
+StructuredBuffer<uint> SegmentUintTable;
+RWStructuredBuffer<float> NextPressure;
+RWStructuredBuffer<float> NextFlow;
+
+uint SegmentCount;
+
+[numthreads(FLUID_SEGMENT_1D_GPU_THREAD_GROUP_SIZE, 1, 1)]
+void FluidSegment1DBoundaryGeneralMain(uint3 DispatchThreadId : SV_DispatchThreadId)
+{
+	const uint SlotIndex = DispatchThreadId.x;
+	const uint TotalSlots = SegmentCount * 2u;
+	if (SlotIndex >= TotalSlots)
+	{
+		return;
+	}
+	const uint SegmentIndex = SlotIndex / 2u;
+	const bool bLeft = (SlotIndex & 1u) == 0u;
+
+	const uint CellBaseIndex = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 0u);
+	const uint CellCount = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 1u);
+	if (CellCount < 2u)
+	{
+		return;
+	}
+
+	const uint LeftBoundaryKind = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 2u);
+	const uint RightBoundaryKind = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 3u);
+	const uint LeftEndpointKind = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 14u);
+	const uint RightEndpointKind = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 15u);
+
+	const uint BoundaryKind = bLeft ? LeftBoundaryKind : RightBoundaryKind;
+	const uint EndpointKind = bLeft ? LeftEndpointKind : RightEndpointKind;
+
+	if (BoundaryKind == FLUID_SEGMENT_1D_BOUNDARY_FIXED_FLOW)
+	{
+		if (EndpointKind == FLUID_SEGMENT_1D_ENDPOINT_SOURCE || EndpointKind == FLUID_SEGMENT_1D_ENDPOINT_PRESSURE_CONSUMER)
+		{
+			return;
+		}
+	}
+
+	const uint BoundaryCell = bLeft ? CellBaseIndex : (CellBaseIndex + CellCount - 1u);
+	const uint NeighborCell = bLeft ? (CellBaseIndex + 1u) : (CellBaseIndex + CellCount - 2u);
+
+	if (BoundaryKind == FLUID_SEGMENT_1D_BOUNDARY_FIXED_PRESSURE)
+	{
+		const float BoundaryPressure = bLeft
+			? FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 4u)
+			: FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 5u);
+		NextPressure[BoundaryCell] = BoundaryPressure;
+		NextFlow[BoundaryCell] = NextFlow[NeighborCell];
+		return;
+	}
+
+	if (BoundaryKind == FLUID_SEGMENT_1D_BOUNDARY_FIXED_FLOW)
+	{
+		const float BoundaryFlow = bLeft
+			? FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 6u)
+			: FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 7u);
+		NextFlow[BoundaryCell] = BoundaryFlow;
+		NextPressure[BoundaryCell] = NextPressure[NeighborCell];
+		return;
+	}
+
+	NextFlow[BoundaryCell] = -NextFlow[NeighborCell];
+	NextPressure[BoundaryCell] = NextPressure[NeighborCell];
+}

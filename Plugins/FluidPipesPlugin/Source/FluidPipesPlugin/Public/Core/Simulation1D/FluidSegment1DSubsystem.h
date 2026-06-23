@@ -1,8 +1,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Core/Simulation1D/BaseFluidSegment1DSimulation.h"
 #include "Data/FluidData.h"
+#include "Other/FluidPipesSimulationSettingsTypes.h"
+
+class ULazyFluidPipesDeveloperSettings;
 #include "Subsystems/WorldSubsystem.h"
+#include "Templates/UniquePtr.h"
 #include "UObject/WeakObjectPtr.h"
 #include "FluidSegment1DSubsystem.generated.h"
 
@@ -29,6 +34,11 @@ public:
 
 	void ApplyImportedOneDSegments(const TArray<FFluidSegmentStateOneD>& Segments, const TArray<APipeFluidPipeActor*>& IncomingPipeActors);
 
+	UFUNCTION(BlueprintCallable, Category = "FluidOneD")
+	void RebuildActiveSimulationForCurrentSettings();
+
+	const ULazyFluidPipesDeveloperSettings& GetSimulationSettings() const;
+
 private:
 	struct FFluidOneDJunctionEndpointIncident
 	{
@@ -38,7 +48,8 @@ private:
 
 	void SimulateStep(float SimulationStepTime);
 	void UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors();
-	void RebuildJunctionSceneNodeKeyTopology();
+	void UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors(TArray<FFluidSegmentStateOneD>& TargetSegmentStates);
+	void RebuildJunctionSceneNodeKeyTopology(const TArray<FFluidSegmentStateOneD>& SourceSegmentStates);
 	void ApplyJunctionCouplingToNextSegmentStates(const TArray<FFluidSegmentStateOneD>& CurrentSegmentStates, TArray<FFluidSegmentStateOneD>& NextSegmentStates) const;
 	void SolveSegmentWaterHammerStep(const FFluidSegmentStateOneD& CurrentSegmentState, float SimulationStepTime, float GravityAccelerationAlongAxis, FFluidSegmentStateOneD& NextSegmentState) const;
 	void ApplyBoundaryConditions(const FFluidSegmentStateOneD& CurrentSegmentState, FFluidSegmentStateOneD& NextSegmentState) const;
@@ -47,6 +58,12 @@ private:
 	float GetCrossSectionArea(const FFluidSegmentStateOneD& SegmentState) const;
 	bool IsSegmentStateFinite(const FFluidSegmentStateOneD& SegmentState) const;
 	void DrawDebugOneDSegments(int32 DebugLevel) const;
+	void CollectSegmentIndicesWithinDebugDrawDistance(TArray<int32>& OutSegmentIndices) const;
+	void ReadbackAndDrawOffGameThreadOneDDebug(int32 OneDWorldDebugDetailLevel);
+	void DrawOneDDebugForSegmentIndices(int32 OneDWorldDebugDetailLevel, const TArray<int32>& SegmentIndicesWithinDebugDrawDistance);
+	void EnsureActiveOneDSimulationMatchesSettings(const ULazyFluidPipesDeveloperSettings& Settings);
+	bool UsesOffGameThreadOneDSimulationState() const;
+	static FString BuildOneDSimulationBackendDisplayName(EFluidSegmentSimulationOneDBackend Backend);
 
 	UPROPERTY(EditAnywhere, Category = "FluidOneD")
 	TArray<FFluidSegmentStateOneD> SegmentStates;
@@ -56,4 +73,7 @@ private:
 	TMap<int32, TArray<FFluidOneDJunctionEndpointIncident>> JunctionSceneNodeKeyToIncidentEndpoints;
 
 	float AccumulatedTime = 0.0f;
+
+	TUniquePtr<FBaseFluidSegment1DSimulation> ActiveSimulation;
+	EFluidSegmentSimulationOneDBackend ActiveOneDSimulationBackend = EFluidSegmentSimulationOneDBackend::CpuGameThread;
 };

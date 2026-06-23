@@ -1,0 +1,56 @@
+#ifndef FLUID_SEGMENT_1D_COMMON_USH
+#define FLUID_SEGMENT_1D_COMMON_USH
+
+#define FLUID_SEGMENT_1D_GPU_THREAD_GROUP_SIZE 64u
+#define FLUID_SEGMENT_1D_UINTS_PER_SEGMENT 32u
+
+#define FLUID_SEGMENT_1D_BOUNDARY_REFLECTIVE 0u
+#define FLUID_SEGMENT_1D_BOUNDARY_FIXED_PRESSURE 1u
+#define FLUID_SEGMENT_1D_BOUNDARY_FIXED_FLOW 2u
+
+#define FLUID_SEGMENT_1D_ENDPOINT_NONE 0u
+#define FLUID_SEGMENT_1D_ENDPOINT_SOURCE 1u
+#define FLUID_SEGMENT_1D_ENDPOINT_PRESSURE_CONSUMER 2u
+#define FLUID_SEGMENT_1D_ENDPOINT_CONSTANT_FLOW 3u
+
+uint FluidSegment1DLoadSegmentUint(StructuredBuffer<uint> SegmentUintTable, uint SegmentIndex, uint FieldIndex)
+{
+	return SegmentUintTable[SegmentIndex * FLUID_SEGMENT_1D_UINTS_PER_SEGMENT + FieldIndex];
+}
+
+float FluidSegment1DLoadSegmentFloat(StructuredBuffer<uint> SegmentUintTable, uint SegmentIndex, uint FieldIndex)
+{
+	return asfloat(FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, FieldIndex));
+}
+
+float FluidSegment1DPressureSampleNearBoundary(StructuredBuffer<float> PressureBuffer, uint CellBaseIndex, uint CellCount, bool bLeftEndpoint)
+{
+	if (CellCount < 2u)
+	{
+		return 0.0f;
+	}
+	if (bLeftEndpoint)
+	{
+		if (CellCount >= 3u)
+		{
+			return 0.5f * (PressureBuffer[CellBaseIndex + 1u] + PressureBuffer[CellBaseIndex + 2u]);
+		}
+		return PressureBuffer[CellBaseIndex + 1u];
+	}
+	if (CellCount >= 3u)
+	{
+		return 0.5f * (PressureBuffer[CellBaseIndex + CellCount - 2u] + PressureBuffer[CellBaseIndex + CellCount - 3u]);
+	}
+	return PressureBuffer[CellBaseIndex + CellCount - 2u];
+}
+
+float FluidSegment1DAcousticImpedance(StructuredBuffer<uint> SegmentUintTable, uint SegmentIndex)
+{
+	const float CrossSectionArea = max(FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 9u), 1.0e-4f);
+	const float SafeDensity = max(FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 10u), 1.0e-4f);
+	const float PressureCoefficient = FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 12u);
+	const float SafeWaveSpeed = sqrt(max(PressureCoefficient * CrossSectionArea / SafeDensity, 1.0f));
+	return SafeDensity * SafeWaveSpeed / CrossSectionArea;
+}
+
+#endif

@@ -16,6 +16,9 @@ public:
 	virtual TStatId GetStatId() const override;
 	virtual bool IsTickable() const override;
 
+	UFUNCTION(BlueprintCallable, Category = "FluidLevelImport")
+	void RunLevelPipeImportNow();
+
 private:
 	void RunLevelPipeImport();
 

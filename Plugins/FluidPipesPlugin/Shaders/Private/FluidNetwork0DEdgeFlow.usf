@@ -1,0 +1,41 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/FluidPipesPlugin/Private/FluidNetwork0DCommon.ush"
+
+StructuredBuffer<uint> EdgeFromNodeIndex;
+StructuredBuffer<uint> EdgeToNodeIndex;
+StructuredBuffer<float> EdgeResistance;
+StructuredBuffer<float> EdgeInertance;
+RWStructuredBuffer<float> EdgeFlowRate;
+StructuredBuffer<float> NodePressure;
+
+uint EdgeCount;
+float SimulationStepTime;
+
+[numthreads(FLUID_NETWORK_0D_GPU_THREAD_GROUP_SIZE, 1, 1)]
+void FluidNetwork0DEdgeFlowMain(uint3 DispatchThreadId : SV_DispatchThreadId)
+{
+	const uint EdgeIndex = DispatchThreadId.x;
+	if (EdgeIndex >= EdgeCount)
+	{
+		return;
+	}
+
+	const uint FromNodeIndex = EdgeFromNodeIndex[EdgeIndex];
+	const uint ToNodeIndex = EdgeToNodeIndex[EdgeIndex];
+	const float PressureDifference = NodePressure[FromNodeIndex] - NodePressure[ToNodeIndex];
+	const float Resistance = EdgeResistance[EdgeIndex];
+	const float Inertance = EdgeInertance[EdgeIndex];
+	float FlowRate = EdgeFlowRate[EdgeIndex];
+
+	if (Inertance > 1.0e-8f)
+	{
+		const float FlowRateDerivative = (PressureDifference - Resistance * FlowRate) / Inertance;
+		FlowRate += FlowRateDerivative * SimulationStepTime;
+	}
+	else
+	{
+		FlowRate = PressureDifference / max(Resistance, 1.0e-8f);
+	}
+
+	EdgeFlowRate[EdgeIndex] = FlowRate;
+}

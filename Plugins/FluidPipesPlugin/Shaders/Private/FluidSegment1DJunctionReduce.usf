@@ -1,0 +1,66 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/FluidPipesPlugin/Private/FluidSegment1DCommon.ush"
+
+StructuredBuffer<uint> SegmentUintTable;
+StructuredBuffer<uint> JunctionHeadersPacked;
+StructuredBuffer<uint> JunctionIncidentsPacked;
+StructuredBuffer<float> NextPressure;
+RWStructuredBuffer<float> JunctionPressureOut;
+
+uint JunctionCount;
+
+[numthreads(FLUID_SEGMENT_1D_GPU_THREAD_GROUP_SIZE, 1, 1)]
+void FluidSegment1DJunctionReduceMain(uint3 DispatchThreadId : SV_DispatchThreadId)
+{
+	const uint JunctionIndex = DispatchThreadId.x;
+	if (JunctionIndex >= JunctionCount)
+	{
+		return;
+	}
+
+	const uint IncidentStart = JunctionHeadersPacked[JunctionIndex * 2u + 0u];
+	const uint IncidentCount = JunctionHeadersPacked[JunctionIndex * 2u + 1u];
+	if (IncidentCount < 2u)
+	{
+		JunctionPressureOut[JunctionIndex] = 0.0f;
+		return;
+	}
+
+	float WeightedPressureTimesImpedanceSum = 0.0f;
+	float AcousticImpedanceSum = 0.0f;
+	float SimplePressureSum = 0.0f;
+	uint SimplePressureContributorCount = 0u;
+
+	for (uint IncidentOffset = 0u; IncidentOffset < IncidentCount; ++IncidentOffset)
+	{
+		const uint PackedBase = (IncidentStart + IncidentOffset) * 3u;
+		const uint SegmentIndex = JunctionIncidentsPacked[PackedBase + 0u];
+		const bool bLeftEndpoint = JunctionIncidentsPacked[PackedBase + 1u] != 0u;
+
+		const uint CellBaseIndex = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 0u);
+		const uint CellCount = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 1u);
+		if (CellCount < 2u)
+		{
+			continue;
+		}
+
+		const float BranchPressureNearJunction = FluidSegment1DPressureSampleNearBoundary(NextPressure, CellBaseIndex, CellCount, bLeftEndpoint);
+		SimplePressureSum += BranchPressureNearJunction;
+		SimplePressureContributorCount += 1u;
+
+		const float AcousticImpedance = FluidSegment1DAcousticImpedance(SegmentUintTable, SegmentIndex);
+		WeightedPressureTimesImpedanceSum += BranchPressureNearJunction * AcousticImpedance;
+		AcousticImpedanceSum += AcousticImpedance;
+	}
+
+	if (SimplePressureContributorCount == 0u)
+	{
+		JunctionPressureOut[JunctionIndex] = 0.0f;
+		return;
+	}
+
+	const float JunctionPressure = AcousticImpedanceSum > 1.0e-4f
+		? WeightedPressureTimesImpedanceSum / AcousticImpedanceSum
+		: SimplePressureSum / float(SimplePressureContributorCount);
+	JunctionPressureOut[JunctionIndex] = JunctionPressure;
+}

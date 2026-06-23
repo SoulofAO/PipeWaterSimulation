@@ -1,0 +1,24 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/FluidPipesPlugin/Private/FluidSegment1DCommon.ush"
+
+RWStructuredBuffer<float> NextPressure;
+RWStructuredBuffer<float> NextFlow;
+
+uint TotalCells;
+uint bEnableClamping;
+float MinimumPressure;
+float MaximumPressure;
+float MinimumVolumeFlowRate;
+float MaximumVolumeFlowRate;
+
+[numthreads(FLUID_SEGMENT_1D_GPU_THREAD_GROUP_SIZE, 1, 1)]
+void FluidSegment1DStateClampMain(uint3 DispatchThreadId : SV_DispatchThreadId)
+{
+	const uint CellIndex = DispatchThreadId.x;
+	if (CellIndex >= TotalCells || bEnableClamping == 0u)
+	{
+		return;
+	}
+	NextPressure[CellIndex] = clamp(NextPressure[CellIndex], MinimumPressure, MaximumPressure);
+	NextFlow[CellIndex] = clamp(NextFlow[CellIndex], MinimumVolumeFlowRate, MaximumVolumeFlowRate);
+}

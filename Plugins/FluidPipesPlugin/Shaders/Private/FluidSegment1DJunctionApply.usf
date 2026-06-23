@@ -1,0 +1,51 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/FluidPipesPlugin/Private/FluidSegment1DCommon.ush"
+
+#define FLUID_SEGMENT_1D_JUNCTION_INTERIOR_PRESSURE_RELAXATION_FRACTION 0.25f
+
+StructuredBuffer<uint> SegmentUintTable;
+StructuredBuffer<uint> JunctionIncidentsPacked;
+StructuredBuffer<float> JunctionPressureOut;
+RWStructuredBuffer<float> NextPressure;
+RWStructuredBuffer<float> NextFlow;
+
+uint TotalJunctionIncidents;
+
+[numthreads(FLUID_SEGMENT_1D_GPU_THREAD_GROUP_SIZE, 1, 1)]
+void FluidSegment1DJunctionApplyMain(uint3 DispatchThreadId : SV_DispatchThreadId)
+{
+	const uint IncidentIndex = DispatchThreadId.x;
+	if (IncidentIndex >= TotalJunctionIncidents)
+	{
+		return;
+	}
+
+	const uint PackedBase = IncidentIndex * 3u;
+	const uint SegmentIndex = JunctionIncidentsPacked[PackedBase + 0u];
+	const bool bLeftEndpoint = JunctionIncidentsPacked[PackedBase + 1u] != 0u;
+	const uint JunctionIndex = JunctionIncidentsPacked[PackedBase + 2u];
+
+	const uint CellBaseIndex = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 0u);
+	const uint CellCount = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 1u);
+	if (CellCount < 2u)
+	{
+		return;
+	}
+
+	const uint BoundaryKind = bLeftEndpoint
+		? FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 2u)
+		: FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 3u);
+	if (BoundaryKind != FLUID_SEGMENT_1D_BOUNDARY_REFLECTIVE)
+	{
+		return;
+	}
+
+	const uint BoundaryCellIndex = bLeftEndpoint ? CellBaseIndex : (CellBaseIndex + CellCount - 1u);
+	const uint InteriorNeighborCellIndex = bLeftEndpoint ? (CellBaseIndex + 1u) : (CellBaseIndex + CellCount - 2u);
+
+	const float JunctionPressure = JunctionPressureOut[JunctionIndex];
+	NextPressure[BoundaryCellIndex] = JunctionPressure;
+	NextFlow[BoundaryCellIndex] = NextFlow[InteriorNeighborCellIndex];
+	const float InteriorPressureBeforeRelaxation = NextPressure[InteriorNeighborCellIndex];
+	NextPressure[InteriorNeighborCellIndex] = lerp(InteriorPressureBeforeRelaxation, JunctionPressure, FLUID_SEGMENT_1D_JUNCTION_INTERIOR_PRESSURE_RELAXATION_FRACTION);
+}

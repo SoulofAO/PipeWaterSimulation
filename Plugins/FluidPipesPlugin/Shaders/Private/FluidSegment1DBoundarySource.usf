@@ -1,0 +1,45 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/FluidPipesPlugin/Private/FluidSegment1DCommon.ush"
+
+StructuredBuffer<uint> SegmentUintTable;
+StructuredBuffer<uint> BoundarySourceWorkPacked;
+RWStructuredBuffer<float> NextPressure;
+RWStructuredBuffer<float> NextFlow;
+
+uint SourceBoundaryCount;
+
+[numthreads(FLUID_SEGMENT_1D_GPU_THREAD_GROUP_SIZE, 1, 1)]
+void FluidSegment1DBoundarySourceMain(uint3 DispatchThreadId : SV_DispatchThreadId)
+{
+	const uint WorkIndex = DispatchThreadId.x;
+	if (WorkIndex >= SourceBoundaryCount)
+	{
+		return;
+	}
+	const uint2 Item = uint2(BoundarySourceWorkPacked[WorkIndex * 2u + 0u], BoundarySourceWorkPacked[WorkIndex * 2u + 1u]);
+	const uint SegmentIndex = Item.x;
+	const uint bLeftUint = Item.y;
+	const bool bLeft = bLeftUint != 0u;
+
+	const uint CellBaseIndex = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 0u);
+	const uint CellCount = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 1u);
+	if (CellCount < 2u)
+	{
+		return;
+	}
+
+	const float SupplyMagnitude = max(0.0f, bLeft
+		? FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 24u)
+		: FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 25u));
+	if (SupplyMagnitude <= 1.0e-4f)
+	{
+		return;
+	}
+
+	const float SignedFlow = bLeft ? SupplyMagnitude : (-SupplyMagnitude);
+	const uint BoundaryCell = bLeft ? CellBaseIndex : (CellBaseIndex + CellCount - 1u);
+	const uint NeighborCell = bLeft ? (CellBaseIndex + 1u) : (CellBaseIndex + CellCount - 2u);
+
+	NextFlow[BoundaryCell] = SignedFlow;
+	NextPressure[BoundaryCell] = NextPressure[NeighborCell];
+}

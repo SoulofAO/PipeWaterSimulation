@@ -42,8 +42,21 @@ public class FluidPipesPlugin : ModuleRules
                 "DeveloperSettings",
 				"GeometryCore",
 				"GeometryScriptingCore",
+				"Projects",
+				"RenderCore",
+				"RHI",
 			}
 			);
+
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.AddRange(
+				new string[]
+				{
+					"UnrealEd",
+				}
+			);
+		}
 		
 		
 		DynamicallyLoadedModuleNames.AddRange(

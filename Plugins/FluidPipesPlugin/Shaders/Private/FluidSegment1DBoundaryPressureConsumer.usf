@@ -1,0 +1,70 @@
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/FluidPipesPlugin/Private/FluidSegment1DCommon.ush"
+
+StructuredBuffer<uint> SegmentUintTable;
+StructuredBuffer<uint> BoundaryPressureConsumerWorkPacked;
+RWStructuredBuffer<float> NextPressure;
+RWStructuredBuffer<float> NextFlow;
+
+uint PressureConsumerBoundaryCount;
+
+float FluidSegment1DPressureConsumerSignedFlow(bool bLowAxisPipeAttachedEndpoint, float BoundaryAdjacentCellGaugePressure, float ConsumerReferenceGaugePressure, float ConsumerVolumeFlowRatePerGaugePressureExcess, float MinimumPressureConsumerVolumeFlowRate, float MaximumPressureConsumerVolumeFlowRate)
+{
+	const float PressureExcessOverReference = max(0.0f, BoundaryAdjacentCellGaugePressure - ConsumerReferenceGaugePressure);
+	const float UncappedPressureConsumerVolumeFlowRate = PressureExcessOverReference * ConsumerVolumeFlowRatePerGaugePressureExcess;
+	const float PressureConsumerVolumeFlowRateMagnitude = clamp(UncappedPressureConsumerVolumeFlowRate, MinimumPressureConsumerVolumeFlowRate, MaximumPressureConsumerVolumeFlowRate);
+	if (PressureConsumerVolumeFlowRateMagnitude <= 1.0e-4f)
+	{
+		return 0.0f;
+	}
+	return bLowAxisPipeAttachedEndpoint ? (-PressureConsumerVolumeFlowRateMagnitude) : PressureConsumerVolumeFlowRateMagnitude;
+}
+
+[numthreads(FLUID_SEGMENT_1D_GPU_THREAD_GROUP_SIZE, 1, 1)]
+void FluidSegment1DBoundaryPressureConsumerMain(uint3 DispatchThreadId : SV_DispatchThreadId)
+{
+	const uint WorkIndex = DispatchThreadId.x;
+	if (WorkIndex >= PressureConsumerBoundaryCount)
+	{
+		return;
+	}
+	const uint2 Item = uint2(BoundaryPressureConsumerWorkPacked[WorkIndex * 2u + 0u], BoundaryPressureConsumerWorkPacked[WorkIndex * 2u + 1u]);
+	const uint SegmentIndex = Item.x;
+	const uint bLeftUint = Item.y;
+	const bool bLeft = bLeftUint != 0u;
+
+	const uint CellBaseIndex = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 0u);
+	const uint CellCount = FluidSegment1DLoadSegmentUint(SegmentUintTable, SegmentIndex, 1u);
+	if (CellCount < 2u)
+	{
+		return;
+	}
+
+	const uint BoundaryCell = bLeft ? CellBaseIndex : (CellBaseIndex + CellCount - 1u);
+	const uint NeighborForPressure = bLeft ? (CellBaseIndex + 1u) : (CellBaseIndex + CellCount - 2u);
+
+	const float BoundaryAdjacentCellGaugePressure = NextPressure[BoundaryCell];
+
+	const float4 ConsumerParams = bLeft
+		? float4(
+			FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 16u),
+			FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 17u),
+			FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 18u),
+			FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 19u))
+		: float4(
+			FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 20u),
+			FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 21u),
+			FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 22u),
+			FluidSegment1DLoadSegmentFloat(SegmentUintTable, SegmentIndex, 23u));
+
+	const float SignedFlow = FluidSegment1DPressureConsumerSignedFlow(
+		bLeft,
+		BoundaryAdjacentCellGaugePressure,
+		ConsumerParams.x,
+		ConsumerParams.y,
+		ConsumerParams.z,
+		ConsumerParams.w);
+
+	NextFlow[BoundaryCell] = SignedFlow;
+	NextPressure[BoundaryCell] = NextPressure[NeighborForPressure];
+}
