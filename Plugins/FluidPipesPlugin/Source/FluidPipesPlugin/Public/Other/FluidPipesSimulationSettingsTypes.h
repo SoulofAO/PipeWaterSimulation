@@ -9,7 +9,8 @@ enum class EFluidLevelPipeImportTarget : uint8
 	Disabled,
 	ZeroDNetwork,
 	OneDSegments,
-	Both
+	Both,
+	HybridNetwork
 };
 
 UENUM(BlueprintType)

@@ -34,6 +34,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "FluidZeroD")
 	void RebuildActiveSimulationForCurrentSettings();
 
+	void RunCpuGameThreadHybridSimulationStep(float SimulationStepTime, const TArray<bool>& EdgeFlowFixedByOneDMask);
+
+	TArray<FFluidNetworkNodeStateZeroD>& GetMutableNetworkNodeStates();
+
+	TArray<FFluidNetworkEdgeStateZeroD>& GetMutableNetworkEdgeStates();
+
+	void RefreshNetworkNodeExternalFlowsForHybrid();
+
 private:
 	void SimulateStep(float SimulationStepTime);
 	void RefreshNetworkNodeExternalFlowsFromWorldPointActors();

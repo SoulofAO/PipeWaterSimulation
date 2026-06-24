@@ -1,5 +1,6 @@
 #include "Core/Simulation1D/FluidSegment1DSubsystem.h"
 
+#include "Async/ParallelFor.h"
 #include "Core/Actors/PipeFluidBasePointActor.h"
 #include "Core/Actors/PipeFluidPipeActor.h"
 #include "Core/LevelImport/FluidPipePassiveJunctionMerge.h"
@@ -35,6 +36,7 @@ void UFluidSegment1DSubsystem::Tick(float DeltaTime)
 {
 	const ULazyFluidPipesDeveloperSettings& Settings = GetSimulationSettings();
 	const bool bEnableFluidSegmentSimulationOneD = Settings.EnableFluidSegmentSimulationOneD;
+	const bool bFluidHybridSimulationActive = FFluidPipesSimulationSettingsLibrary::IsFluidHybridSimulationActive(Settings);
 	if (bEnableFluidSegmentSimulationOneD)
 	{
 		const bool bPrintSimulationFrameTiming = FluidPipesShouldPrintSimulationFrameTiming();
@@ -49,12 +51,15 @@ void UFluidSegment1DSubsystem::Tick(float DeltaTime)
 			ReadbackAndDrawOffGameThreadOneDDebug(OneDWorldDebugDetailLevel);
 		}
 
-		AccumulatedTime += DeltaTime;
-		while (AccumulatedTime >= Settings.SimulationStepTimeOneD)
+		if (!bFluidHybridSimulationActive)
 		{
-			SimulateStep(Settings.SimulationStepTimeOneD);
-			AccumulatedTime -= Settings.SimulationStepTimeOneD;
-			++SimulationStepCount;
+			AccumulatedTime += DeltaTime;
+			while (AccumulatedTime >= Settings.SimulationStepTimeOneD)
+			{
+				SimulateStep(Settings.SimulationStepTimeOneD);
+				AccumulatedTime -= Settings.SimulationStepTimeOneD;
+				++SimulationStepCount;
+			}
 		}
 
 		if (bRecordBenchmarkFrameStats && FluidPipeSubsystem)
@@ -112,6 +117,116 @@ void UFluidSegment1DSubsystem::ResetSimulationState()
 const TArray<FFluidSegmentStateOneD>& UFluidSegment1DSubsystem::GetSegmentStates() const
 {
 	return SegmentStates;
+}
+
+TArray<FFluidSegmentStateOneD>& UFluidSegment1DSubsystem::GetMutableSegmentStates()
+{
+	return SegmentStates;
+}
+
+const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& UFluidSegment1DSubsystem::GetSegmentPipeActors() const
+{
+	return SegmentPipeActors;
+}
+
+void UFluidSegment1DSubsystem::RunCpuGameThreadHybridSimulationStep(float SimulationStepTime, const TArray<bool>& SegmentDetailActiveMask)
+{
+	const ULazyFluidPipesDeveloperSettings& Settings = GetSimulationSettings();
+	UpdateOneDimensionBoundaryFlowsFromAttachedPipePointActors();
+
+	UWorld* World = GetWorld();
+	const float GravityAcceleration = World ? FMath::Abs(World->GetGravityZ()) : 980.0f;
+	const FVector GravityDirectionWorld = FVector::UpVector;
+
+	TArray<float> GravityAccelerationAlongAxis;
+	GravityAccelerationAlongAxis.SetNum(SegmentStates.Num());
+	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	{
+		float GravityAxisComponent = 0.0f;
+		if (SegmentPipeActors.IsValidIndex(SegmentIndex))
+		{
+			if (const APipeFluidPipeActor* PipeActor = SegmentPipeActors[SegmentIndex].Get())
+			{
+				const FVector PipeAxisDirectionWorld = PipeActor->GetActorForwardVector().GetSafeNormal();
+				GravityAxisComponent = FVector::DotProduct(GravityDirectionWorld, PipeAxisDirectionWorld);
+			}
+		}
+		GravityAccelerationAlongAxis[SegmentIndex] = GravityAcceleration * GravityAxisComponent;
+	}
+
+	TArray<FFluidSegmentStateOneD> NextSegmentStates;
+	NextSegmentStates = SegmentStates;
+
+	const int32 SegmentCount = SegmentStates.Num();
+	ParallelFor(SegmentCount, [this, &SegmentDetailActiveMask, &NextSegmentStates, &GravityAccelerationAlongAxis, SimulationStepTime](int32 SegmentIndex)
+		{
+			if (!SegmentDetailActiveMask.IsValidIndex(SegmentIndex) || !SegmentDetailActiveMask[SegmentIndex])
+			{
+				return;
+			}
+
+			const FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+			if (SegmentState.CellStates.Num() < 2)
+			{
+				return;
+			}
+
+			const float StableStepTime = ComputeStableStepTime(SegmentState);
+			const float EffectiveStepTime = FMath::Min(SimulationStepTime, StableStepTime);
+			const float GravityAccelerationAlongAxisValue = GravityAccelerationAlongAxis.IsValidIndex(SegmentIndex)
+				? GravityAccelerationAlongAxis[SegmentIndex]
+				: 0.0f;
+
+			FFluidSegmentStateOneD NextSegmentState = SegmentState;
+			SolveSegmentWaterHammerStep(SegmentState, EffectiveStepTime, GravityAccelerationAlongAxisValue, NextSegmentState);
+			ApplyBoundaryConditions(SegmentState, NextSegmentState);
+			NextSegmentStates[SegmentIndex] = MoveTemp(NextSegmentState);
+		});
+
+	JunctionSceneNodeKeyToIncidentEndpoints.Reset();
+	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	{
+		if (!SegmentDetailActiveMask.IsValidIndex(SegmentIndex) || !SegmentDetailActiveMask[SegmentIndex])
+		{
+			continue;
+		}
+
+		const FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+		if (SegmentState.CellStates.Num() < 2)
+		{
+			continue;
+		}
+		if (SegmentState.LeftSceneNodeKey != INDEX_NONE)
+		{
+			JunctionSceneNodeKeyToIncidentEndpoints.FindOrAdd(SegmentState.LeftSceneNodeKey).Add(FFluidOneDJunctionEndpointIncident{SegmentIndex, true});
+		}
+		if (SegmentState.RightSceneNodeKey != INDEX_NONE)
+		{
+			JunctionSceneNodeKeyToIncidentEndpoints.FindOrAdd(SegmentState.RightSceneNodeKey).Add(FFluidOneDJunctionEndpointIncident{SegmentIndex, false});
+		}
+	}
+
+	ApplyJunctionCouplingToNextSegmentStates(SegmentStates, NextSegmentStates);
+
+	for (int32 SegmentIndex = 0; SegmentIndex < SegmentStates.Num(); ++SegmentIndex)
+	{
+		if (!SegmentDetailActiveMask.IsValidIndex(SegmentIndex) || !SegmentDetailActiveMask[SegmentIndex])
+		{
+			continue;
+		}
+
+		FFluidSegmentStateOneD& SegmentState = SegmentStates[SegmentIndex];
+		FFluidSegmentStateOneD& NextSegmentState = NextSegmentStates[SegmentIndex];
+		UpdateDerivedCellValues(NextSegmentState);
+		if (!IsSegmentStateFinite(NextSegmentState))
+		{
+			continue;
+		}
+		SegmentState = MoveTemp(NextSegmentState);
+	}
+
+	FFluidSimulationStateLimits::ClampAllSegmentStatesOneD(SegmentStates, Settings);
+	RebuildJunctionSceneNodeKeyTopology(SegmentStates);
 }
 
 void UFluidSegment1DSubsystem::ApplyImportedOneDSegments(const TArray<FFluidSegmentStateOneD>& Segments)

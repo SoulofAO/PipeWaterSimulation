@@ -2,6 +2,7 @@
 
 #include "Core/Actors/PipeFluidBasePointActor.h"
 #include "Core/Actors/PipeFluidPipeActor.h"
+#include "Core/Hybrid/FluidHybridSimulationSubsystem.h"
 #include "Core/Simulation0D/FluidNetwork0DSubsystem.h"
 #include "Core/Simulation1D/FluidSegment1DSubsystem.h"
 #include "Engine/World.h"
@@ -225,5 +226,20 @@ void UFluidPipeLevelImportSubsystem::RunLevelPipeImport()
 	{
 		ImportFluidActorsIntoZeroDSubsystem(World);
 		ImportFluidActorsIntoOneDSubsystem(World);
+	}
+
+	if (Settings.LevelPipeImportTarget == EFluidLevelPipeImportTarget::HybridNetwork)
+	{
+		ImportFluidActorsIntoZeroDSubsystem(World);
+		ImportFluidActorsIntoOneDSubsystem(World);
+	}
+
+	if (FFluidPipesSimulationSettingsLibrary::IsFluidHybridSimulationActive(Settings)
+		|| Settings.LevelPipeImportTarget == EFluidLevelPipeImportTarget::HybridNetwork)
+	{
+		if (UFluidHybridSimulationSubsystem* HybridSimulationSubsystem = World->GetSubsystem<UFluidHybridSimulationSubsystem>())
+		{
+			HybridSimulationSubsystem->RebuildHybridTopologyFromImportedNetworks();
+		}
 	}
 }

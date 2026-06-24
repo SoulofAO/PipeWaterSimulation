@@ -4,6 +4,7 @@
 #include "Core/LevelImport/FluidPipePassiveJunctionMerge.h"
 #include "Core/Simulation0D/FluidNetwork0DCPUSimulation.h"
 #include "Core/Simulation0D/FluidNetwork0DGpuSimulation.h"
+#include "Core/Simulation0D/FluidNetwork0DSimulationStepLibrary.h"
 #include "DrawDebugHelpers.h"
 #include "EngineUtils.h"
 #include "FluidPipesDrawDebug.h"
@@ -74,6 +75,7 @@ void UFluidNetwork0DSubsystem::Tick(float DeltaTime)
 {
 	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
 	const bool bEnableFluidNetworkSimulationZeroD = Settings.EnableFluidNetworkSimulationZeroD;
+	const bool bFluidHybridSimulationActive = FFluidPipesSimulationSettingsLibrary::IsFluidHybridSimulationActive(Settings);
 	if (bEnableFluidNetworkSimulationZeroD)
 	{
 		const bool bPrintSimulationFrameTiming = FluidPipesShouldPrintSimulationFrameTiming();
@@ -87,12 +89,15 @@ void UFluidNetwork0DSubsystem::Tick(float DeltaTime)
 			ReadbackAndDrawOffGameThreadZeroDDebug();
 		}
 
-		AccumulatedTime += DeltaTime;
-		while (AccumulatedTime >= Settings.SimulationStepTimeZeroD)
+		if (!bFluidHybridSimulationActive)
 		{
-			SimulateStep(Settings.SimulationStepTimeZeroD);
-			AccumulatedTime -= Settings.SimulationStepTimeZeroD;
-			++SimulationStepCount;
+			AccumulatedTime += DeltaTime;
+			while (AccumulatedTime >= Settings.SimulationStepTimeZeroD)
+			{
+				SimulateStep(Settings.SimulationStepTimeZeroD);
+				AccumulatedTime -= Settings.SimulationStepTimeZeroD;
+				++SimulationStepCount;
+			}
 		}
 
 		if (bRecordBenchmarkFrameStats && FluidPipeSubsystem)
@@ -153,6 +158,28 @@ const TArray<FFluidNetworkNodeStateZeroD>& UFluidNetwork0DSubsystem::GetNodeStat
 const TArray<FFluidNetworkEdgeStateZeroD>& UFluidNetwork0DSubsystem::GetEdgeStates() const
 {
 	return NetworkEdgeStates;
+}
+
+TArray<FFluidNetworkNodeStateZeroD>& UFluidNetwork0DSubsystem::GetMutableNetworkNodeStates()
+{
+	return NetworkNodeStates;
+}
+
+TArray<FFluidNetworkEdgeStateZeroD>& UFluidNetwork0DSubsystem::GetMutableNetworkEdgeStates()
+{
+	return NetworkEdgeStates;
+}
+
+void UFluidNetwork0DSubsystem::RefreshNetworkNodeExternalFlowsForHybrid()
+{
+	RefreshNetworkNodeExternalFlowsFromWorldPointActors();
+}
+
+void UFluidNetwork0DSubsystem::RunCpuGameThreadHybridSimulationStep(float SimulationStepTime, const TArray<bool>& EdgeFlowFixedByOneDMask)
+{
+	const ULazyFluidPipesDeveloperSettings& Settings = FFluidPipesSimulationSettingsLibrary::ResolveSimulationSettings(this);
+	RefreshNetworkNodeExternalFlowsFromWorldPointActors();
+	FFluidNetwork0DSimulationStepLibrary::RunSimulationStep(NetworkNodeStates, NetworkEdgeStates, SimulationStepTime, Settings, EdgeFlowFixedByOneDMask);
 }
 
 void UFluidNetwork0DSubsystem::ApplyImportedZeroDNetwork(const TArray<FFluidNetworkNodeStateZeroD>& Nodes, const TArray<FFluidNetworkEdgeStateZeroD>& Edges)

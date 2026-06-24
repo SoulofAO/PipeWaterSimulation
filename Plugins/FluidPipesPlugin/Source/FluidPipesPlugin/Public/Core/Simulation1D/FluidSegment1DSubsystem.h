@@ -39,6 +39,12 @@ public:
 
 	const ULazyFluidPipesDeveloperSettings& GetSimulationSettings() const;
 
+	void RunCpuGameThreadHybridSimulationStep(float SimulationStepTime, const TArray<bool>& SegmentDetailActiveMask);
+
+	TArray<FFluidSegmentStateOneD>& GetMutableSegmentStates();
+
+	const TArray<TWeakObjectPtr<APipeFluidPipeActor>>& GetSegmentPipeActors() const;
+
 private:
 	struct FFluidOneDJunctionEndpointIncident
 	{

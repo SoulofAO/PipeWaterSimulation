@@ -3,10 +3,16 @@
 #include "Core/Simulation/FluidSimulationStateLimits.h"
 #include "Other/LazyFluidPipesDeveloperSettings.h"
 
-void FFluidNetwork0DSimulationStepLibrary::UpdateEdgeFlows(TArray<FFluidNetworkEdgeStateZeroD>& EdgeStates, const TArray<FFluidNetworkNodeStateZeroD>& NodeStates, float SimulationStepTime)
+void FFluidNetwork0DSimulationStepLibrary::UpdateEdgeFlows(TArray<FFluidNetworkEdgeStateZeroD>& EdgeStates, const TArray<FFluidNetworkNodeStateZeroD>& NodeStates, float SimulationStepTime, const TArray<bool>* EdgeFlowFixedByOneDMask)
 {
-	for (FFluidNetworkEdgeStateZeroD& NetworkEdgeState : EdgeStates)
+	for (int32 EdgeIndex = 0; EdgeIndex < EdgeStates.Num(); ++EdgeIndex)
 	{
+		FFluidNetworkEdgeStateZeroD& NetworkEdgeState = EdgeStates[EdgeIndex];
+		if (EdgeFlowFixedByOneDMask && EdgeFlowFixedByOneDMask->IsValidIndex(EdgeIndex) && (*EdgeFlowFixedByOneDMask)[EdgeIndex])
+		{
+			continue;
+		}
+
 		if (!NodeStates.IsValidIndex(NetworkEdgeState.FromNodeIndex) || !NodeStates.IsValidIndex(NetworkEdgeState.ToNodeIndex))
 		{
 			NetworkEdgeState.FlowRate = 0.0f;
@@ -64,7 +70,13 @@ void FFluidNetwork0DSimulationStepLibrary::UpdateNodePressures(TArray<FFluidNetw
 
 void FFluidNetwork0DSimulationStepLibrary::RunSimulationStep(TArray<FFluidNetworkNodeStateZeroD>& NodeStates, TArray<FFluidNetworkEdgeStateZeroD>& EdgeStates, float SimulationStepTime, const ULazyFluidPipesDeveloperSettings& Settings)
 {
-	UpdateEdgeFlows(EdgeStates, NodeStates, SimulationStepTime);
+	RunSimulationStep(NodeStates, EdgeStates, SimulationStepTime, Settings, TArray<bool>());
+}
+
+void FFluidNetwork0DSimulationStepLibrary::RunSimulationStep(TArray<FFluidNetworkNodeStateZeroD>& NodeStates, TArray<FFluidNetworkEdgeStateZeroD>& EdgeStates, float SimulationStepTime, const ULazyFluidPipesDeveloperSettings& Settings, const TArray<bool>& EdgeFlowFixedByOneDMask)
+{
+	const TArray<bool>* EdgeFlowMaskPointer = EdgeFlowFixedByOneDMask.Num() == EdgeStates.Num() ? &EdgeFlowFixedByOneDMask : nullptr;
+	UpdateEdgeFlows(EdgeStates, NodeStates, SimulationStepTime, EdgeFlowMaskPointer);
 	IntegrateNodeVolumes(NodeStates, EdgeStates, SimulationStepTime);
 	UpdateNodePressures(NodeStates, Settings.ZeroDPressureScale);
 	FFluidSimulationStateLimits::ClampAllNetworkStatesZeroD(NodeStates, EdgeStates, Settings);

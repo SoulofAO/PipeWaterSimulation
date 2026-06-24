@@ -19,3 +19,24 @@ const ULazyFluidPipesDeveloperSettings& FFluidPipesSimulationSettingsLibrary::Re
 
 	return *GetDefault<ULazyFluidPipesDeveloperSettings>();
 }
+
+bool FFluidPipesSimulationSettingsLibrary::IsFluidHybridSimulationActive(const ULazyFluidPipesDeveloperSettings& Settings)
+{
+	return Settings.EnableFluidNetworkSimulationZeroD && Settings.EnableFluidSegmentSimulationOneD;
+}
+
+float FFluidPipesSimulationSettingsLibrary::ResolveHybridSimulationStepTime(const ULazyFluidPipesDeveloperSettings& Settings)
+{
+	return FMath::Min3(Settings.HybridSimulationStepTime, Settings.SimulationStepTimeZeroD, Settings.SimulationStepTimeOneD);
+}
+
+bool FFluidPipesSimulationSettingsLibrary::HybridSimulationRequiresCpuGameThreadCoupling(const ULazyFluidPipesDeveloperSettings& Settings)
+{
+	if (!IsFluidHybridSimulationActive(Settings))
+	{
+		return false;
+	}
+
+	return Settings.FluidNetworkSimulationZeroDBackend != EFluidNetworkSimulationZeroDBackend::CpuGameThread
+		|| Settings.FluidSegmentSimulationOneDBackend != EFluidSegmentSimulationOneDBackend::CpuGameThread;
+}

@@ -30,6 +30,18 @@ int32 FluidPipesGetDrawDebugLevel()
 	return GFluidPipesDrawDebugLevel.GetValueOnGameThread();
 }
 
+bool FluidPipesTryResolveSimulateInEditorViewportReferenceWorldLocation(FVector& OutReferenceWorldLocation)
+{
+#if WITH_EDITOR
+	if (GEditor && GEditor->bIsSimulatingInEditor && GCurrentLevelEditingViewportClient)
+	{
+		OutReferenceWorldLocation = GCurrentLevelEditingViewportClient->ViewTransformPerspective.GetLocation();
+		return true;
+	}
+#endif
+	return false;
+}
+
 bool FluidPipesIsWorldLocationWithinDebugDrawDistance(const UWorld* World, const FVector& WorldLocation)
 {
 	if (!World)
@@ -58,7 +70,7 @@ bool FluidPipesIsWorldLocationWithinDebugDrawDistance(const UWorld* World, const
 	if (!PlayerController || !PlayerController->PlayerCameraManager)
 	{
 #if WITH_EDITOR
-		if (GEditor && GEditor->bIsSimulatingInEditor && GCurrentLevelEditingViewportClient)
+		if (FluidPipesTryResolveSimulateInEditorViewportReferenceWorldLocation(ViewLocationWorld))
 		{
 			return FVector::DistSquared(WorldLocation, ViewLocationWorld) <= FMath::Square(MaximumDistanceCentimeters);
 		}

@@ -6,6 +6,7 @@ class UObject;
 struct FLinearColor;
 
 int32 FluidPipesGetDrawDebugLevel();
+bool FluidPipesTryResolveSimulateInEditorViewportReferenceWorldLocation(FVector& OutReferenceWorldLocation);
 bool FluidPipesIsWorldLocationWithinDebugDrawDistance(const UWorld* World, const FVector& WorldLocation);
 bool FluidPipesShouldPrintSimulationFrameTiming();
 void FluidPipesPrintSimulationFrameTimingMessage(UObject* WorldContextObject, const FString& Message, const FLinearColor& TextColor);

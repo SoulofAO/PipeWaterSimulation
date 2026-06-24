@@ -25,6 +25,10 @@ void ULazyFluidPipesDeveloperSettings::CopyFrom(const ULazyFluidPipesDeveloperSe
 	SimulationStepTimeOneD = SourceSettings.SimulationStepTimeOneD;
 	OneDSolverCflFactor = SourceSettings.OneDSolverCflFactor;
 	FluidSegmentSimulationOneDBackend = SourceSettings.FluidSegmentSimulationOneDBackend;
+	HybridOneDActivationDistanceCentimeters = SourceSettings.HybridOneDActivationDistanceCentimeters;
+	HybridDecompositionUpdateIntervalSeconds = SourceSettings.HybridDecompositionUpdateIntervalSeconds;
+	HybridInterfaceCouplingIterations = SourceSettings.HybridInterfaceCouplingIterations;
+	HybridSimulationStepTime = SourceSettings.HybridSimulationStepTime;
 	LevelPipeImportTarget = SourceSettings.LevelPipeImportTarget;
 	WorldDebugMaximumDrawDistanceCentimeters = SourceSettings.WorldDebugMaximumDrawDistanceCentimeters;
 	WorldDebugPerspectiveFontScaling = SourceSettings.WorldDebugPerspectiveFontScaling;
@@ -47,10 +51,11 @@ FString ULazyFluidPipesDeveloperSettings::BuildProfileDescription() const
 		return ProfileLabel.ToString();
 	}
 	return FString::Format(
-		TEXT("0D={0} 1D={1} 0D-Backend={2} 1D-Backend={3}"),
+		TEXT("0D={0} 1D={1} Hybrid={2} 0D-Backend={3} 1D-Backend={4}"),
 		{
 			EnableFluidNetworkSimulationZeroD ? TEXT("on") : TEXT("off"),
 			EnableFluidSegmentSimulationOneD ? TEXT("on") : TEXT("off"),
+			(EnableFluidNetworkSimulationZeroD && EnableFluidSegmentSimulationOneD) ? TEXT("on") : TEXT("off"),
 			UEnum::GetDisplayValueAsText(FluidNetworkSimulationZeroDBackend).ToString(),
 			UEnum::GetDisplayValueAsText(FluidSegmentSimulationOneDBackend).ToString()
 		});

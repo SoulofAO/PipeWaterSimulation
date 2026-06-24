@@ -15,7 +15,7 @@ public:
 	FName ProfileLabel = NAME_None;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidZeroD")
-	bool EnableFluidNetworkSimulationZeroD = true;
+	bool EnableFluidNetworkSimulationZeroD = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidZeroD")
 	bool ZeroDMergeColinearPassiveJunctionAtImport = false;
@@ -80,8 +80,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidOneD")
 	EFluidSegmentSimulationOneDBackend FluidSegmentSimulationOneDBackend = EFluidSegmentSimulationOneDBackend::CpuGameThread;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidHybrid", meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float HybridOneDActivationDistanceCentimeters = 4000.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidHybrid", meta = (ClampMin = "0.05", UIMin = "0.05"))
+	float HybridDecompositionUpdateIntervalSeconds = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidHybrid", meta = (ClampMin = "1", ClampMax = "8", UIMin = "1", UIMax = "8"))
+	int32 HybridInterfaceCouplingIterations = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidHybrid", meta = (ClampMin = "0.001", UIMin = "0.001"))
+	float HybridSimulationStepTime = 0.008f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidLevelImport")
-	EFluidLevelPipeImportTarget LevelPipeImportTarget = EFluidLevelPipeImportTarget::Disabled;
+	EFluidLevelPipeImportTarget LevelPipeImportTarget = EFluidLevelPipeImportTarget::OneDSegments;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidPipesWorldDebug", meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float WorldDebugMaximumDrawDistanceCentimeters = 4000.0f;
@@ -111,13 +123,13 @@ public:
 	bool WorldDebugIncludeOneDPerCellCaptions = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidPipesWorldDebug")
-	bool WorldDebugIncludeZeroDWireGeometry = true;
+	bool WorldDebugIncludeZeroDWireGeometry = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidPipesWorldDebug")
-	bool WorldDebugIncludeZeroDNodeCaptions = true;
+	bool WorldDebugIncludeZeroDNodeCaptions = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Config, Category = "FluidPipesWorldDebug")
-	bool WorldDebugIncludeZeroDFlowArrows = true;
+	bool WorldDebugIncludeZeroDFlowArrows = false;
 
 	void CopyFrom(const ULazyFluidPipesDeveloperSettings& SourceSettings);
 	FString BuildProfileDescription() const;
